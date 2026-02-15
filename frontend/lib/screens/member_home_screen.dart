@@ -8,7 +8,7 @@ import 'package:http/http.dart' as http;
 import '../core/api_client.dart';
 import '../theme/app_theme.dart';
 
-const _apiBase = ApiClient.baseUrl;
+final _apiBase = ApiClient.baseUrl;
 const _padding = 20.0;
 
 class MemberHomeScreen extends StatefulWidget {

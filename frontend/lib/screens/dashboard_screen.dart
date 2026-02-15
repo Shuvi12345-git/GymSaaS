@@ -6,7 +6,7 @@ import 'package:http/http.dart' as http;
 import '../core/api_client.dart';
 import 'attendance_report_screen.dart';
 
-const _apiBase = ApiClient.baseUrl;
+final _apiBase = ApiClient.baseUrl;
 const _deepBlack = Color(0xFF0D0D0D);
 const _gold = Color(0xFFD4AF37);
 const _activeGreen = Color(0xFF22C55E);

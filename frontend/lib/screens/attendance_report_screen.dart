@@ -8,7 +8,7 @@ import 'package:intl/intl.dart';
 import '../core/api_client.dart';
 import '../theme/app_theme.dart';
 
-const _apiBase = ApiClient.baseUrl;
+final _apiBase = ApiClient.baseUrl;
 
 class AttendanceEntry {
   final String id;

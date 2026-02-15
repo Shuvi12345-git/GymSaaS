@@ -81,6 +81,79 @@ To generate an APK you can share with friends for testing:
 
 For a quick **UI-only** build to show the look and flow, the default APK is fine; testers will see the interface even if API calls fail.
 
+---
+
+## Share APK for full end-to-end testing (friends can use all features)
+
+To let friends test the full app (login, members, billing, attendance, etc.) on their phones, the app must call **your backend** on the internet, not localhost. Follow these steps.
+
+### Step 1: Deploy the backend to a public URL
+
+Your backend must be reachable at a URL like `https://your-app.railway.app` or `https://gymsaas.onrender.com`. The app already uses **MongoDB Atlas**, so the backend can run on any cloud host.
+
+**Option A – Railway (recommended, free tier)**  
+1. Go to [railway.app](https://railway.app), sign in with GitHub.  
+2. **New Project** → **Deploy from GitHub repo** → select your GymSaaS repo (or upload the `backend` folder).  
+3. Set **Root Directory** to `backend` (if you deployed the whole repo).  
+4. Set **Start Command** to: `uvicorn main:app --host 0.0.0.0 --port $PORT`.  
+5. Add **Variables**: `MONGODB_URL` = your existing MongoDB Atlas connection string (same as in `backend/main.py`; you can keep it in code for now or move to env).  
+6. Deploy; Railway will give you a URL like `https://your-app.railway.app`. Use this as your API URL (no trailing slash).
+
+**Option B – Render (free tier)**  
+1. Go to [render.com](https://render.com), sign in.  
+2. **New** → **Web Service** → connect repo or upload.  
+3. **Root Directory**: `backend`. **Build**: `pip install -r requirements.txt`. **Start**: `uvicorn main:app --host 0.0.0.0 --port $PORT`.  
+4. Add **Environment Variable**: `MONGODB_URL` (your Atlas URL).  
+5. Deploy and copy the service URL (e.g. `https://gymsaas.onrender.com`).
+
+**Option C – Quick test with ngrok (your PC as server)**  
+1. Run your backend locally: `cd backend && uvicorn main:app --host 0.0.0.0 --port 8000`.  
+2. Install [ngrok](https://ngrok.com), then run: `ngrok http 8000`.  
+3. Use the HTTPS URL ngrok shows (e.g. `https://abc123.ngrok.io`) as your API URL.  
+Note: The URL changes each time you restart ngrok (free); good for a quick test, not for long-term sharing.
+
+### Step 2: Point the app to your backend and build the APK
+
+Open a terminal in the project and run (replace with **your** backend URL, no trailing slash):
+
+```bash
+cd frontend
+flutter build apk --release --dart-define=API_BASE_URL=https://YOUR-BACKEND-URL
+```
+
+Examples:
+
+- Railway: `flutter build apk --release --dart-define=API_BASE_URL=https://gymsaas-production.up.railway.app`
+- Render: `flutter build apk --release --dart-define=API_BASE_URL=https://gymsaas.onrender.com`
+- ngrok: `flutter build apk --release --dart-define=API_BASE_URL=https://abc123.ngrok.io`
+
+The built APK will use this URL for all API calls.
+
+### Step 3: Get the APK and share it
+
+After the build finishes, the APK is at:
+
+```
+frontend/build/app/outputs/flutter-apk/app-release.apk
+```
+
+Share this file (Google Drive, WhatsApp, email, etc.). Testers install it on their Android phone (they may need to allow “Install from unknown sources” for the app or browser used to open the file).
+
+### Step 4: Tell testers how to use it
+
+- **Admin:** Open app → **Admin Dashboard** → use Overview, Members, Fees, Billing, Attendance.  
+- **Member login:** They need a **phone number** that exists in your database. Create at least one member from Admin (or Billing → Walk-in), then share that phone number with friends. They tap **Member Login** → enter that phone → OTP **123456** (simulated) → then they see their dashboard, attendance, and (if PT) diet/workout.  
+- Backend must be **running** and **reachable** (Railway/Render stay up; ngrok only while your PC and ngrok are running).
+
+### Checklist
+
+| Step | What to do |
+|------|------------|
+| 1 | Deploy backend (Railway / Render / ngrok) and get HTTPS URL |
+| 2 | `cd frontend` then `flutter build apk --release --dart-define=API_BASE_URL=https://YOUR-URL` |
+| 3 | Share `frontend/build/app/outputs/flutter-apk/app-release.apk` |
+| 4 | Share a test phone number (and that OTP is 123456) so they can try Member Login |
+
 ## How to Test
 
 ### Quick run (two terminals)

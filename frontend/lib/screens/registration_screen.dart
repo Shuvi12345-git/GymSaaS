@@ -8,7 +8,7 @@ import 'package:http/http.dart' as http;
 import '../core/api_client.dart';
 import '../theme/app_theme.dart';
 
-const _apiBase = ApiClient.baseUrl;
+final _apiBase = ApiClient.baseUrl;
 
 class RegistrationScreen extends StatefulWidget {
   const RegistrationScreen({super.key});

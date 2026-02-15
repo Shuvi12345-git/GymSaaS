@@ -4,12 +4,23 @@ import 'package:http/http.dart' as http;
 
 /// Enterprise-grade API client: connection reuse, timeouts, optional GET cache.
 /// Use [ApiClient.instance] everywhere instead of raw [http.get] for faster loads.
+///
+/// For shared APK (friends testing): build with
+///   flutter build apk --release --dart-define=API_BASE_URL=https://your-backend.com
+/// so the app uses your deployed backend instead of localhost.
 class ApiClient {
   ApiClient._();
 
   static final ApiClient instance = ApiClient._();
 
-  static const String baseUrl = 'http://localhost:8000';
+  static const String _defaultBaseUrl = 'http://localhost:8000';
+  static String get baseUrl {
+    const fromEnv = String.fromEnvironment(
+      'API_BASE_URL',
+      defaultValue: _defaultBaseUrl,
+    );
+    return fromEnv.isEmpty ? _defaultBaseUrl : fromEnv;
+  }
   static const Duration connectTimeout = Duration(seconds: 8);
   static const Duration receiveTimeout = Duration(seconds: 10);
   static const Duration cacheTtl = Duration(seconds: 45);

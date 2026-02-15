@@ -13,7 +13,7 @@ import 'billing_screen.dart';
 import 'dashboard_screen.dart';
 import 'registration_screen.dart';
 
-const _apiBase = ApiClient.baseUrl;
+final _apiBase = ApiClient.baseUrl;
 const _padding = 20.0;
 
 class AdminDashboardScreen extends StatefulWidget {
