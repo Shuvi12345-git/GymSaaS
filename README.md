@@ -58,8 +58,95 @@ A commercial-grade Gym Management System built with **FastAPI** (Backend) and **
     ```bash
     flutter run -d chrome
     ```
+    *App opens in Chrome; API is expected at http://localhost:8000.*
+
+## Build APK for sharing (Android)
+
+To generate an APK you can share with friends for testing:
+
+1.  Open a terminal in the project and run:
+    ```bash
+    cd frontend
+    flutter build apk --release
+    ```
+2.  When the build finishes, the APK is at:
+    ```
+    frontend/build/app/outputs/flutter-apk/app-release.apk
+    ```
+3.  Share that file (e.g. via Google Drive, WhatsApp, or email). Testers install it on their Android phone (they may need to allow “Install from unknown sources” for your file source).
+
+**Important when sharing with others:** The app is configured to call `http://localhost:8000`. On your friends’ phones, “localhost” is their device, so the app will not reach your backend unless you either:
+- **Option A:** Deploy your backend to a public URL (e.g. a VPS or cloud), then in `frontend/lib/core/api_client.dart` set `baseUrl` to that URL (e.g. `https://your-api.example.com`) and rebuild the APK, or  
+- **Option B:** Use the app only for **UI/review** (screens, navigation, layout). Buttons that call the API will fail unless the phone can reach the server.
+
+For a quick **UI-only** build to show the look and flow, the default APK is fine; testers will see the interface even if API calls fail.
+
+## How to Test
+
+### Quick run (two terminals)
+
+**Terminal 1 – Backend**
+```bash
+cd backend
+pip install -r requirements.txt
+python -m uvicorn main:app --reload --host 0.0.0.0 --port 8000
+```
+Wait until you see `Uvicorn running on http://0.0.0.0:8000`.
+
+**Terminal 2 – Frontend**
+```bash
+cd frontend
+flutter pub get
+flutter run -d chrome
+```
+
+### Verify backend
+
+- Open http://localhost:8000 in a browser → should return JSON like `{"message":"Gym API is Live!"}`.
+- Docs: http://localhost:8000/docs (Swagger UI).
+
+### Test in the app
+
+1. **Home screen**  
+   - Tap **Admin** → opens Admin Dashboard (Overview, Members, Fees, Billing).  
+   - Tap **Member Login** → opens Member login (phone + OTP).
+
+2. **Admin**
+   - **Overview:** Total Active/Inactive, Total Collections, Pending Dues, Regular vs PT; tap **Send Month-End Reminders** (simulated WhatsApp in backend console).
+   - **Members:** Register a member (name, phone, email, batch, type Regular/PT). Open a member → for PT, edit Diet chart / Workout schedule.
+   - **Fees:** See Paid/Due/Overdue summary and list of payments.
+   - **Billing:**  
+     - **Walk-in:** New member + first bill (Registration + 1st month) → member appears in Members.  
+     - **Existing Member:** Select member → Log payment (cash/UPI).  
+     - **Invoice / History:** View invoice, simulated UPI QR, Mark as Paid; **Export CSV/Excel** downloads billing history.
+   - **AppBar:** Calendar → Attendance report; Export → Members / Payments / Billing Excel.
+
+3. **Member portal**
+   - On home, tap **Member Login**. Enter a **registered phone number** (e.g. one you created in Admin).
+   - Request OTP → use **123456** (simulated).
+   - After login: see **Attendance** (last check-in), **Status**, **Batch**.  
+   - **PT members:** Diet chart and Workout schedule (if set by admin).  
+   - **Regular members:** Preset weekly workouts (Chest Day, Leg Day, etc.).  
+   - **Pay Fees:** List of Due/Overdue payments; Pay → simulated payment (backend marks as Paid and prints `[WHATSAPP SENT to ...]` in backend console).
+
+### Optional: seed test data
+
+- From **Admin → Members** (embedded dashboard), use **Seed 90-day test members** and **Mark inactive (90d)** to test the 90-day auto-inactive flow.
+- Backend console shows simulated notifications when you register, pay, or run fee reminders.
+
+## Performance (Enterprise / Gym Management)
+
+The Flutter app uses several best practices for faster load and smoother UX:
+
+- **Shared API client** (`lib/core/api_client.dart`): Single HTTP client (connection reuse), configurable timeouts, and in-memory GET cache (45s TTL). List/dashboard endpoints use cache so tab switches and repeat views are instant; pull-to-refresh invalidates cache for fresh data.
+- **Lazy tab loading**: Admin dashboard builds only the selected tab when first visited (Overview, Members, Fees, Billing), reducing initial work and memory.
+- **Asset precache**: Logo is precached after the first frame so it appears quickly when opening Admin or Member screens.
+- **RepaintBoundary**: Member list cards are wrapped in `RepaintBoundary` for smoother scrolling.
+- **Explicit binding**: `WidgetsFlutterBinding.ensureInitialized()` in `main()` for correct startup on Android/iOS.
+
+To change cache duration or base URL, edit `lib/core/api_client.dart`.
 
 ## Project Structure
 
 - `backend/`: FastAPI application, database logic, and automation scripts.
-- `frontend/`: Flutter application code (Screens, Widgets, Models).
+- `frontend/`: Flutter application code (Screens, Widgets, Models). `lib/core/api_client.dart` for shared HTTP and cache.

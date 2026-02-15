@@ -1,12 +1,14 @@
 import 'dart:convert';
 
 import 'package:flutter/material.dart';
+import 'package:font_awesome_flutter/font_awesome_flutter.dart';
 import 'package:http/http.dart' as http;
 import 'package:intl/intl.dart';
 
-const _apiBase = 'http://localhost:8000';
-const _deepBlack = Color(0xFF0D0D0D);
-const _gold = Color(0xFFD4AF37);
+import '../core/api_client.dart';
+import '../theme/app_theme.dart';
+
+const _apiBase = ApiClient.baseUrl;
 
 class AttendanceEntry {
   final String id;
@@ -53,6 +55,7 @@ class _AttendanceReportScreenState extends State<AttendanceReportScreen> {
   List<AttendanceEntry> _entries = [];
   bool _loading = true;
   String? _error;
+  DateTime _selectedDate = DateTime.now();
 
   @override
   void initState() {
@@ -65,11 +68,13 @@ class _AttendanceReportScreenState extends State<AttendanceReportScreen> {
       _loading = true;
       _error = null;
     });
-
+    final dateStr = DateFormat('yyyy-MM-dd').format(_selectedDate);
     try {
-      final response = await http
-          .get(Uri.parse('$_apiBase/attendance/today'))
-          .timeout(const Duration(seconds: 10));
+      final response = await ApiClient.instance.get(
+        '/attendance/by-date',
+        queryParameters: {'date': dateStr},
+        useCache: false,
+      );
 
       if (!mounted) return;
 
@@ -97,6 +102,45 @@ class _AttendanceReportScreenState extends State<AttendanceReportScreen> {
     }
   }
 
+  Future<void> _pickDate() async {
+    final picked = await showDatePicker(
+      context: context,
+      initialDate: _selectedDate,
+      firstDate: DateTime(2020),
+      lastDate: DateTime.now().add(const Duration(days: 1)),
+    );
+    if (picked != null && mounted) {
+      setState(() => _selectedDate = picked);
+      _load();
+    }
+  }
+
+  Future<void> _deleteAttendance(AttendanceEntry e) async {
+    final confirm = await showDialog<bool>(
+      context: context,
+      builder: (ctx) => AlertDialog(
+        title: const Text('Remove check-in?'),
+        content: Text('Remove ${e.memberName} (${e.batch}) from this date? Use for wrong person or duplicate.'),
+        actions: [
+          TextButton(onPressed: () => Navigator.pop(ctx, false), child: const Text('Cancel')),
+          FilledButton(onPressed: () => Navigator.pop(ctx, true), child: const Text('Remove')),
+        ],
+      ),
+    );
+    if (confirm != true || !mounted) return;
+    try {
+      final r = await ApiClient.instance.delete('/attendance/${e.id}');
+      if (mounted && r.statusCode >= 200 && r.statusCode < 300) {
+        ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text('Check-in removed')));
+        _load();
+      } else if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text('Failed: ${r.statusCode}')));
+      }
+    } catch (_) {
+      if (mounted) ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text('Failed to remove')));
+    }
+  }
+
   static const _batchOrder = ['Morning', 'Evening', 'Ladies'];
 
   List<AttendanceEntry> _sortedByBatch() {
@@ -113,130 +157,179 @@ class _AttendanceReportScreenState extends State<AttendanceReportScreen> {
   @override
   Widget build(BuildContext context) {
     final timeFormat = DateFormat('hh:mm a');
+    final isToday = _selectedDate.year == DateTime.now().year &&
+        _selectedDate.month == DateTime.now().month &&
+        _selectedDate.day == DateTime.now().day;
 
     return Scaffold(
       appBar: AppBar(
-        title: const Text('Today\'s Attendance'),
+        title: const Text('Attendance by Date'),
         actions: [
+          IconButton(
+            icon: const Icon(Icons.calendar_month),
+            tooltip: 'Pick date',
+            onPressed: _loading ? null : _pickDate,
+          ),
           IconButton(
             icon: const Icon(Icons.refresh),
             onPressed: _loading ? null : _load,
           ),
         ],
       ),
-      body: _loading
-          ? const Center(
-              child: Column(
-                mainAxisAlignment: MainAxisAlignment.center,
+      body: Column(
+        children: [
+          Material(
+            color: AppTheme.surfaceVariant,
+            child: Padding(
+              padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 12),
+              child: Row(
                 children: [
-                  CircularProgressIndicator(color: _gold),
-                  SizedBox(height: 16),
-                  Text('Loading attendance...', style: TextStyle(color: Colors.grey)),
+                  Icon(FontAwesomeIcons.calendarDays, color: AppTheme.primary, size: 20),
+                  const SizedBox(width: 12),
+                  Text(
+                    DateFormat('EEEE, d MMM yyyy').format(_selectedDate),
+                    style: TextStyle(fontSize: 16, fontWeight: FontWeight.w600, color: AppTheme.onSurface),
+                  ),
+                  const Spacer(),
+                  TextButton.icon(
+                    onPressed: _loading ? null : _pickDate,
+                    icon: const Icon(Icons.edit_calendar, size: 18),
+                    label: const Text('Change'),
+                  ),
                 ],
               ),
-            )
-          : _error != null
-              ? Center(
-                  child: Padding(
-                    padding: const EdgeInsets.all(24),
+            ),
+          ),
+          Expanded(
+            child: _loading
+                ? const Center(
                     child: Column(
                       mainAxisAlignment: MainAxisAlignment.center,
                       children: [
-                        const Icon(Icons.error_outline, size: 48, color: Colors.grey),
-                        const SizedBox(height: 16),
-                        Text(_error!, textAlign: TextAlign.center, style: const TextStyle(color: Colors.grey)),
-                        const SizedBox(height: 24),
-                        FilledButton.icon(
-                          onPressed: _load,
-                          icon: const Icon(Icons.refresh),
-                          label: const Text('Retry'),
-                          style: FilledButton.styleFrom(backgroundColor: _gold, foregroundColor: _deepBlack),
-                        ),
+                        CircularProgressIndicator(color: AppTheme.primary),
+                        SizedBox(height: 16),
+                        Text('Loading attendance...', style: TextStyle(color: Colors.grey)),
                       ],
                     ),
-                  ),
-                )
-              : _entries.isEmpty
-                  ? Center(
-                      child: Column(
-                        mainAxisAlignment: MainAxisAlignment.center,
-                        children: [
-                          Icon(Icons.event_available, size: 64, color: Colors.grey.shade600),
-                          const SizedBox(height: 16),
-                          Text('No check-ins today (IST)', style: TextStyle(color: Colors.grey.shade400, fontSize: 18)),
-                          const SizedBox(height: 8),
-                          Text('Check-ins will appear here', style: TextStyle(color: Colors.grey.shade600)),
-                        ],
-                      ),
-                    )
-                  : RefreshIndicator(
-                      onRefresh: _load,
-                      color: _gold,
-                      child: ListView.builder(
-                        padding: const EdgeInsets.all(16),
-                        itemCount: _sortedByBatch().length,
-                        itemBuilder: (context, index) {
-                          final e = _sortedByBatch()[index];
-                          final showBatchHeader = index == 0 ||
-                              _sortedByBatch()[index - 1].batch != e.batch;
-                          return Column(
-                            crossAxisAlignment: CrossAxisAlignment.start,
+                  )
+                : _error != null
+                    ? Center(
+                        child: Padding(
+                          padding: const EdgeInsets.all(24),
+                          child: Column(
+                            mainAxisAlignment: MainAxisAlignment.center,
                             children: [
-                              if (showBatchHeader) ...[
-                                const SizedBox(height: 8),
-                                Padding(
-                                  padding: const EdgeInsets.only(left: 4, bottom: 6),
-                                  child: Text(
-                                    e.batch,
-                                    style: const TextStyle(
-                                      color: _gold,
-                                      fontWeight: FontWeight.bold,
-                                      fontSize: 16,
-                                    ),
-                                  ),
-                                ),
-                              ],
-                              Card(
-                                color: const Color(0xFF1A1A1A),
-                                margin: const EdgeInsets.only(bottom: 8),
-                                shape: RoundedRectangleBorder(
-                                  borderRadius: BorderRadius.circular(12),
-                                  side: const BorderSide(color: _gold, width: 0.5),
-                                ),
-                                child: ListTile(
-                                  contentPadding: const EdgeInsets.symmetric(horizontal: 20, vertical: 12),
-                                  leading: CircleAvatar(
-                                    backgroundColor: _gold,
-                                    foregroundColor: _deepBlack,
-                                    child: Text(
-                                      (e.memberName.isNotEmpty ? e.memberName[0] : '?').toUpperCase(),
-                                      style: const TextStyle(fontWeight: FontWeight.bold),
-                                    ),
-                                  ),
-                                  title: Text(
-                                    e.memberName,
-                                    style: const TextStyle(color: Colors.white, fontWeight: FontWeight.w600),
-                                  ),
-                                  subtitle: Padding(
-                                    padding: const EdgeInsets.only(top: 6),
-                                    child: Chip(
-                                      label: Text(e.batch, style: const TextStyle(color: _deepBlack, fontWeight: FontWeight.w600)),
-                                      backgroundColor: _gold,
-                                      padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 0),
-                                      materialTapTargetSize: MaterialTapTargetSize.shrinkWrap,
-                                    ),
-                                  ),
-                                  trailing: Text(
-                                    timeFormat.format(e.checkInAt),
-                                    style: TextStyle(color: Colors.grey.shade400, fontWeight: FontWeight.w500),
-                                  ),
-                                ),
+                              const Icon(Icons.error_outline, size: 48, color: Colors.grey),
+                              const SizedBox(height: 16),
+                              Text(_error!, textAlign: TextAlign.center, style: const TextStyle(color: Colors.grey)),
+                              const SizedBox(height: 24),
+                              FilledButton.icon(
+                                onPressed: _load,
+                                icon: const Icon(Icons.refresh),
+                                label: const Text('Retry'),
+                                style: FilledButton.styleFrom(backgroundColor: AppTheme.primary, foregroundColor: AppTheme.onPrimary),
                               ),
                             ],
-                          );
-                        },
-                      ),
-                    ),
+                          ),
+                        ),
+                      )
+                    : _entries.isEmpty
+                        ? Center(
+                            child: Column(
+                              mainAxisAlignment: MainAxisAlignment.center,
+                              children: [
+                                Icon(Icons.event_available, size: 64, color: Colors.grey.shade600),
+                                const SizedBox(height: 16),
+                                Text(
+                                  'No check-ins ${isToday ? 'today' : 'on this date'} (IST)',
+                                  style: TextStyle(color: Colors.grey.shade600, fontSize: 18),
+                                ),
+                                const SizedBox(height: 8),
+                                Text('Check-ins will appear here', style: TextStyle(color: Colors.grey.shade600)),
+                              ],
+                            ),
+                          )
+                        : RefreshIndicator(
+                            onRefresh: _load,
+                            color: AppTheme.primary,
+                            child: ListView.builder(
+                              padding: const EdgeInsets.all(16),
+                              itemCount: _sortedByBatch().length,
+                              itemBuilder: (context, index) {
+                                final e = _sortedByBatch()[index];
+                                final showBatchHeader = index == 0 || _sortedByBatch()[index - 1].batch != e.batch;
+                                return Column(
+                                  crossAxisAlignment: CrossAxisAlignment.start,
+                                  children: [
+                                    if (showBatchHeader) ...[
+                                      const SizedBox(height: 8),
+                                      Padding(
+                                        padding: const EdgeInsets.only(left: 4, bottom: 6),
+                                        child: Text(
+                                          e.batch,
+                                          style: const TextStyle(
+                                            color: AppTheme.primary,
+                                            fontWeight: FontWeight.bold,
+                                            fontSize: 16,
+                                          ),
+                                        ),
+                                      ),
+                                    ],
+                                    Card(
+                                      color: AppTheme.surfaceVariant,
+                                      margin: const EdgeInsets.only(bottom: 8),
+                                      shape: RoundedRectangleBorder(
+                                        borderRadius: BorderRadius.circular(12),
+                                        side: BorderSide(color: AppTheme.primary.withOpacity(0.5)),
+                                      ),
+                                      child: ListTile(
+                                        contentPadding: const EdgeInsets.symmetric(horizontal: 20, vertical: 12),
+                                        leading: CircleAvatar(
+                                          backgroundColor: AppTheme.primary,
+                                          foregroundColor: AppTheme.onPrimary,
+                                          child: Text(
+                                            (e.memberName.isNotEmpty ? e.memberName[0] : '?').toUpperCase(),
+                                            style: const TextStyle(fontWeight: FontWeight.bold),
+                                          ),
+                                        ),
+                                        title: Text(
+                                          e.memberName,
+                                          style: const TextStyle(color: AppTheme.onSurface, fontWeight: FontWeight.w600),
+                                        ),
+                                        subtitle: Padding(
+                                          padding: const EdgeInsets.only(top: 6),
+                                          child: Chip(
+                                            label: Text(e.batch, style: const TextStyle(color: AppTheme.onPrimary, fontWeight: FontWeight.w600)),
+                                            backgroundColor: AppTheme.primary,
+                                            padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 0),
+                                            materialTapTargetSize: MaterialTapTargetSize.shrinkWrap,
+                                          ),
+                                        ),
+                                        trailing: Row(
+                                          mainAxisSize: MainAxisSize.min,
+                                          children: [
+                                            Text(
+                                              timeFormat.format(e.checkInAt),
+                                              style: TextStyle(color: Colors.grey.shade600, fontWeight: FontWeight.w500),
+                                            ),
+                                            IconButton(
+                                              icon: const Icon(Icons.delete_outline, size: 20),
+                                              tooltip: 'Remove check-in',
+                                              onPressed: () => _deleteAttendance(e),
+                                              color: Colors.red.shade400,
+                                            ),
+                                          ],
+                                        ),
+                                      ),
+                                    ),
+                                  ],
+                                );
+                              },
+                            ),
+                          ),
+          ),
+        ],
+      ),
     );
   }
 }

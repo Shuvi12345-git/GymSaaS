@@ -3,9 +3,10 @@ import 'dart:convert';
 import 'package:flutter/material.dart';
 import 'package:http/http.dart' as http;
 
+import '../core/api_client.dart';
 import 'attendance_report_screen.dart';
 
-const _apiBase = 'http://localhost:8000';
+const _apiBase = ApiClient.baseUrl;
 const _deepBlack = Color(0xFF0D0D0D);
 const _gold = Color(0xFFD4AF37);
 const _activeGreen = Color(0xFF22C55E);
@@ -78,9 +79,7 @@ class _DashboardScreenState extends State<DashboardScreen> {
     });
 
     try {
-      final response = await http
-          .get(Uri.parse('$_apiBase/members'))
-          .timeout(const Duration(seconds: 10));
+      final response = await ApiClient.instance.get('/members', useCache: true);
 
       if (!mounted) return;
 
@@ -111,9 +110,7 @@ class _DashboardScreenState extends State<DashboardScreen> {
     setState(() => _checkingInIds.add(m.id));
 
     try {
-      final response = await http
-          .post(Uri.parse('$_apiBase/attendance/check-in/${m.id}'))
-          .timeout(const Duration(seconds: 30));
+      final response = await ApiClient.instance.post('/attendance/check-in/${m.id}');
 
       if (!mounted) return;
 
@@ -193,6 +190,114 @@ class _DashboardScreenState extends State<DashboardScreen> {
     }
   }
 
+  void _showMemberEditDialog(BuildContext context, Member m) {
+    final nameController = TextEditingController(text: m.name);
+    final phoneController = TextEditingController(text: m.phone);
+    final emailController = TextEditingController(text: m.email);
+    String batch = m.batch;
+    String status = m.status;
+    String membershipType = m.membershipType;
+    final scheduleController = TextEditingController(text: m.workoutSchedule ?? '');
+    final dietController = TextEditingController(text: m.dietChart ?? '');
+
+    showDialog(
+      context: context,
+      builder: (ctx) => StatefulBuilder(
+        builder: (ctx, setState) => AlertDialog(
+          title: const Text('Edit member'),
+          content: SingleChildScrollView(
+            child: Column(
+              mainAxisSize: MainAxisSize.min,
+              crossAxisAlignment: CrossAxisAlignment.stretch,
+              children: [
+                TextField(controller: nameController, decoration: const InputDecoration(labelText: 'Name')),
+                const SizedBox(height: 12),
+                TextField(controller: phoneController, decoration: const InputDecoration(labelText: 'Phone'), keyboardType: TextInputType.phone),
+                const SizedBox(height: 12),
+                TextField(controller: emailController, decoration: const InputDecoration(labelText: 'Email'), keyboardType: TextInputType.emailAddress),
+                const SizedBox(height: 12),
+                DropdownButtonFormField<String>(
+                  value: membershipType,
+                  decoration: const InputDecoration(labelText: 'Membership type'),
+                  items: const [
+                    DropdownMenuItem(value: 'Regular', child: Text('Regular')),
+                    DropdownMenuItem(value: 'PT', child: Text('PT')),
+                  ],
+                  onChanged: (v) => setState(() => membershipType = v ?? membershipType),
+                ),
+                const SizedBox(height: 12),
+                DropdownButtonFormField<String>(
+                  value: batch,
+                  decoration: const InputDecoration(labelText: 'Batch'),
+                  items: const [
+                    DropdownMenuItem(value: 'Morning', child: Text('Morning')),
+                    DropdownMenuItem(value: 'Evening', child: Text('Evening')),
+                    DropdownMenuItem(value: 'Ladies', child: Text('Ladies')),
+                  ],
+                  onChanged: (v) => setState(() => batch = v ?? batch),
+                ),
+                const SizedBox(height: 12),
+                DropdownButtonFormField<String>(
+                  value: status,
+                  decoration: const InputDecoration(labelText: 'Status'),
+                  items: const [
+                    DropdownMenuItem(value: 'Active', child: Text('Active')),
+                    DropdownMenuItem(value: 'Inactive', child: Text('Inactive')),
+                  ],
+                  onChanged: (v) => setState(() => status = v ?? status),
+                ),
+                if (membershipType.toLowerCase() == 'pt') ...[
+                  const SizedBox(height: 12),
+                  TextField(controller: scheduleController, maxLines: 3, decoration: const InputDecoration(labelText: 'Workout schedule', alignLabelWithHint: true)),
+                  const SizedBox(height: 12),
+                  TextField(controller: dietController, maxLines: 3, decoration: const InputDecoration(labelText: 'Diet chart', alignLabelWithHint: true)),
+                ],
+              ],
+            ),
+          ),
+          actions: [
+            TextButton(onPressed: () => Navigator.pop(ctx), child: const Text('Cancel')),
+            FilledButton(
+              onPressed: () async {
+                Navigator.pop(ctx);
+                final body = <String, dynamic>{
+                  'name': nameController.text.trim(),
+                  'phone': phoneController.text.trim(),
+                  'email': emailController.text.trim(),
+                  'batch': batch,
+                  'status': status,
+                  'membership_type': membershipType,
+                };
+                if (membershipType.toLowerCase() == 'pt') {
+                  body['workout_schedule'] = scheduleController.text;
+                  body['diet_chart'] = dietController.text;
+                }
+                try {
+                  final r = await ApiClient.instance.patch(
+                    '/members/${m.id}',
+                    headers: {'Content-Type': 'application/json'},
+                    body: jsonEncode(body),
+                  );
+                  if (!mounted) return;
+                  if (r.statusCode >= 200 && r.statusCode < 300) {
+                    _loadMembers();
+                    ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text('Member updated')));
+                  } else {
+                    ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text('Failed: ${r.body}')));
+                  }
+                } catch (e) {
+                  if (mounted) ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text('Error: $e')));
+                }
+              },
+              style: FilledButton.styleFrom(backgroundColor: _gold, foregroundColor: _deepBlack),
+              child: const Text('Save'),
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+
   void _showPTEditSheet(BuildContext context, Member m) {
     final scheduleController = TextEditingController(text: m.workoutSchedule ?? '');
     final dietController = TextEditingController(text: m.dietChart ?? '');
@@ -234,14 +339,14 @@ class _DashboardScreenState extends State<DashboardScreen> {
               FilledButton(
                 onPressed: () async {
                   try {
-                    final r = await http.patch(
-                      Uri.parse('$_apiBase/members/${m.id}'),
+                    final r = await ApiClient.instance.patch(
+                      '/members/${m.id}',
                       headers: {'Content-Type': 'application/json'},
                       body: jsonEncode({
                         'workout_schedule': scheduleController.text,
                         'diet_chart': dietController.text,
                       }),
-                    ).timeout(const Duration(seconds: 10));
+                    );
                     if (!mounted) return;
                     Navigator.pop(ctx);
                     if (r.statusCode >= 200 && r.statusCode < 300) {
@@ -264,9 +369,7 @@ class _DashboardScreenState extends State<DashboardScreen> {
     if (_runningAdminAction) return;
     setState(() => _runningAdminAction = true);
     try {
-      final response = await http
-          .post(Uri.parse('$_apiBase/admin/seed-inactive-test'))
-          .timeout(const Duration(seconds: 15));
+      final response = await ApiClient.instance.post('/admin/seed-inactive-test');
       if (!mounted) return;
       if (response.statusCode >= 200 && response.statusCode < 300) {
         _loadMembers();
@@ -291,9 +394,7 @@ class _DashboardScreenState extends State<DashboardScreen> {
     if (_runningAdminAction) return;
     setState(() => _runningAdminAction = true);
     try {
-      final response = await http
-          .post(Uri.parse('$_apiBase/admin/mark-inactive-by-attendance'))
-          .timeout(const Duration(seconds: 15));
+      final response = await ApiClient.instance.post('/admin/mark-inactive-by-attendance');
       if (!mounted) return;
       if (response.statusCode >= 200 && response.statusCode < 300) {
         final body = jsonDecode(response.body) as Map<String, dynamic>?;
@@ -397,7 +498,10 @@ class _DashboardScreenState extends State<DashboardScreen> {
                       ),
                     )
                   : RefreshIndicator(
-                      onRefresh: _loadMembers,
+                      onRefresh: () {
+                        ApiClient.instance.invalidateCache();
+                        return _loadMembers();
+                      },
                       color: _gold,
                       child: ListView.builder(
                         padding: const EdgeInsets.all(16),
@@ -406,7 +510,8 @@ class _DashboardScreenState extends State<DashboardScreen> {
                           final m = _members[index];
                           final isActive = m.status.toLowerCase() == 'active';
                           final isCheckingIn = _checkingInIds.contains(m.id);
-                          return Card(
+                          return RepaintBoundary(
+                            child: Card(
                             color: isActive ? const Color(0xFF1A1A1A) : const Color(0xFF151515),
                             margin: const EdgeInsets.only(bottom: 12),
                             shape: RoundedRectangleBorder(
@@ -467,10 +572,14 @@ class _DashboardScreenState extends State<DashboardScreen> {
                                         ),
                                       ),
                                       const SizedBox(width: 8),
+                                      TextButton(
+                                        onPressed: () => _showMemberEditDialog(context, m),
+                                        child: const Text('Edit'),
+                                      ),
                                       if (m.membershipType.toLowerCase() == 'pt')
                                         TextButton(
                                           onPressed: () => _showPTEditSheet(context, m),
-                                          child: const Text('Edit'),
+                                          child: const Text('PT plan'),
                                         ),
                                       FilledButton(
                                         onPressed: isCheckingIn ? null : () => _checkIn(m),
@@ -493,6 +602,7 @@ class _DashboardScreenState extends State<DashboardScreen> {
                                 ],
                               ),
                             ),
+                          ),
                           );
                         },
                       ),

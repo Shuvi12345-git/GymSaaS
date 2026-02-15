@@ -16,6 +16,7 @@ DATABASE_NAME = "gym_db"
 COLLECTION_MEMBERS = "gym_members"
 COLLECTION_ATTENDANCE = "attendance_logs"
 COLLECTION_PAYMENTS = "payments"
+COLLECTION_INVOICES = "invoices"
 
 # Fee model: ₹1000 registration + Monthly (₹500 Regular / ₹2000 PT)
 REGISTRATION_FEE = 1000
@@ -29,6 +30,7 @@ db = client[DATABASE_NAME]
 members_collection = db[COLLECTION_MEMBERS]
 attendance_collection = db[COLLECTION_ATTENDANCE]
 payments_collection = db[COLLECTION_PAYMENTS]
+invoices_collection = db[COLLECTION_INVOICES]
 
 
 def now_ist() -> datetime:
@@ -117,6 +119,18 @@ class MemberPTUpdate(BaseModel):
     diet_chart: str | None = None
 
 
+class MemberUpdate(BaseModel):
+    """Admin: full member edit for corrections."""
+    name: str | None = None
+    phone: str | None = None
+    email: str | None = None
+    membership_type: MembershipType | None = None
+    batch: Batch | None = None
+    status: str | None = None
+    workout_schedule: str | None = None
+    diet_chart: str | None = None
+
+
 class PaymentResponse(BaseModel):
     id: str
     member_id: str
@@ -128,6 +142,27 @@ class PaymentResponse(BaseModel):
     due_date: date | None = None
     paid_at: datetime | None = None
     created_at: datetime
+
+
+class InvoiceItem(BaseModel):
+    description: str
+    amount: int
+
+
+class InvoiceCreate(BaseModel):
+    member_id: str
+    items: list[InvoiceItem]  # e.g. [{"description": "Registration", "amount": 1000}, {"description": "First Month", "amount": 500}]
+
+
+class InvoiceResponse(BaseModel):
+    id: str
+    member_id: str
+    member_name: str
+    items: list[dict]
+    total: int
+    status: str  # Paid | Unpaid
+    issued_at: datetime
+    paid_at: datetime | None = None
 
 
 class AttendanceRecord(BaseModel):
@@ -143,18 +178,18 @@ class AttendanceRecord(BaseModel):
         return dt.isoformat()
 
 
-# ---------- Notifications (simulated WhatsApp/Email) ----------
-def notify_registration(name: str, email: str, phone: str):
-    """Simulated: send welcome/registration notification."""
-    pass  # In production: WhatsApp/Email API
+# ---------- Notifications (utils.send_notification) ----------
+def _notify_registration(name: str, email: str, phone: str):
+    from utils import send_notification
+    send_notification("registration", {"name": name, "phone": phone, "email": email})
 
-def notify_payment_received(name: str, amount: int, email: str, phone: str):
-    """Simulated: send payment received notification."""
-    pass
+def _notify_payment_received(name: str, amount: int, email: str, phone: str):
+    from utils import send_notification
+    send_notification("payment_received", {"name": name, "phone": phone, "email": email}, {"amount": amount})
 
-def notify_status_change(name: str, new_status: str, email: str, phone: str):
-    """Simulated: send membership status change notification."""
-    pass
+def _notify_status_change(name: str, new_status: str, email: str, phone: str):
+    from utils import send_notification
+    send_notification("status_change", {"name": name, "phone": phone, "email": email}, {"new_status": new_status})
 
 
 @app.get("/")
@@ -183,7 +218,7 @@ async def create_member(member: MemberCreate):
         {"member_id": mid, "member_name": doc["name"], "amount": REGISTRATION_FEE, "fee_type": "registration", "period": None, "status": "Due", "due_date": due_dt, "paid_at": None, "created_at": datetime.now(timezone.utc)},
         {"member_id": mid, "member_name": doc["name"], "amount": monthly_amount, "fee_type": "monthly", "period": period, "status": "Due", "due_date": due_dt, "paid_at": None, "created_at": datetime.now(timezone.utc)},
     ])
-    notify_registration(doc["name"], doc["email"], doc["phone"])
+    _notify_registration(doc["name"], doc["email"], doc["phone"])
 
     return MemberResponse(
         id=mid,
@@ -233,14 +268,26 @@ async def list_members():
 
 
 @app.patch("/members/{member_id}", response_model=MemberResponse)
-async def update_member_pt(member_id: str, body: MemberPTUpdate):
-    """Admin: update PT member's workout schedule and/or diet chart."""
+async def update_member(member_id: str, body: MemberUpdate):
+    """Admin: edit member details (name, phone, email, batch, status, PT fields, etc.) for corrections."""
     from bson import ObjectId
     try:
         oid = ObjectId(member_id)
     except Exception:
         raise HTTPException(status_code=400, detail="Invalid member ID")
     update = {}
+    if body.name is not None:
+        update["name"] = body.name
+    if body.phone is not None:
+        update["phone"] = body.phone
+    if body.email is not None:
+        update["email"] = body.email
+    if body.membership_type is not None:
+        update["membership_type"] = body.membership_type.value if hasattr(body.membership_type, "value") else body.membership_type
+    if body.batch is not None:
+        update["batch"] = body.batch.value if hasattr(body.batch, "value") else body.batch
+    if body.status is not None:
+        update["status"] = body.status
     if body.workout_schedule is not None:
         update["workout_schedule"] = body.workout_schedule
     if body.diet_chart is not None:
@@ -285,12 +332,10 @@ def _to_date(v):
 
 # ---------- Attendance ----------
 
-CHECK_IN_COOLDOWN_HOURS = 4
-
 
 @app.post("/attendance/check-in/{member_id}", response_model=AttendanceRecord)
 async def check_in(member_id: str):
-    """Record check-in in IST. Prevents duplicate check-in within 4 hours."""
+    """Record check-in in IST. One check-in per member per calendar day (IST)."""
     from bson import ObjectId
     from datetime import timezone
 
@@ -308,16 +353,13 @@ async def check_in(member_id: str):
         date_ist_str = now.strftime("%Y-%m-%d")
         batch = batch_from_ist(now)
 
-        cutoff = now - timedelta(hours=CHECK_IN_COOLDOWN_HOURS)
-        cutoff_utc = cutoff.astimezone(timezone.utc)
-        recent = await attendance_collection.find_one(
-            {"member_id": member_id, "check_in_at_utc": {"$gte": cutoff_utc}},
-            sort=[("check_in_at_utc", -1)],
+        already_today = await attendance_collection.find_one(
+            {"member_id": member_id, "date_ist": date_ist_str},
         )
-        if recent:
+        if already_today:
             raise HTTPException(
                 status_code=400,
-                detail=f"Already checked in within the last {CHECK_IN_COOLDOWN_HOURS} hours. Try again later.",
+                detail="Already checked in today. One check-in per day allowed.",
             )
 
         check_in_at_utc = now.astimezone(timezone.utc)
@@ -352,19 +394,15 @@ async def check_in(member_id: str):
         raise HTTPException(status_code=500, detail=f"Server error during check-in: {e!s}")
 
 
-@app.get("/attendance/today", response_model=list[AttendanceRecord])
-async def attendance_today():
-    """All check-ins for current date in IST, sorted by batch then time."""
-    date_ist_str = today_ist().strftime("%Y-%m-%d")
-    cursor = attendance_collection.find({"date_ist": date_ist_str}).sort([("batch", 1), ("check_in_at_utc", 1)])
+async def _attendance_docs_to_records(cursor) -> list:
     out = []
     async for doc in cursor:
         check_in_at_ist = (
             datetime.fromisoformat(doc["check_in_at_ist"]) if doc.get("check_in_at_ist") else doc["check_in_at_utc"]
         )
-        if check_in_at_ist.tzinfo is None:
+        if hasattr(check_in_at_ist, "tzinfo") and check_in_at_ist.tzinfo is None:
             check_in_at_ist = check_in_at_ist.replace(tzinfo=IST)
-        else:
+        elif hasattr(check_in_at_ist, "astimezone"):
             check_in_at_ist = check_in_at_ist.astimezone(IST)
         out.append(
             AttendanceRecord(
@@ -377,6 +415,40 @@ async def attendance_today():
             )
         )
     return out
+
+
+@app.get("/attendance/today", response_model=list[AttendanceRecord])
+async def attendance_today():
+    """All check-ins for current date in IST."""
+    date_ist_str = today_ist().strftime("%Y-%m-%d")
+    return await attendance_by_date(date_ist_str)
+
+
+@app.get("/attendance/by-date", response_model=list[AttendanceRecord])
+async def attendance_by_date_endpoint(date: str):
+    """All check-ins for a given date (YYYY-MM-DD). Use for date picker."""
+    if len(date) != 10 or date[4] != "-" or date[7] != "-":
+        raise HTTPException(status_code=400, detail="date must be YYYY-MM-DD")
+    return await attendance_by_date(date)
+
+
+async def attendance_by_date(date_ist_str: str) -> list:
+    cursor = attendance_collection.find({"date_ist": date_ist_str}).sort([("batch", 1), ("check_in_at_utc", 1)])
+    return await _attendance_docs_to_records(cursor)
+
+
+@app.delete("/attendance/{attendance_id}")
+async def delete_attendance(attendance_id: str):
+    """Admin: remove a check-in record (e.g. wrong person or duplicate)."""
+    from bson import ObjectId
+    try:
+        oid = ObjectId(attendance_id)
+    except Exception:
+        raise HTTPException(status_code=400, detail="Invalid attendance ID")
+    result = await attendance_collection.delete_one({"_id": oid})
+    if result.deleted_count == 0:
+        raise HTTPException(status_code=404, detail="Attendance record not found")
+    return {"message": "Attendance record deleted"}
 
 
 INACTIVE_DAYS_THRESHOLD = 90
@@ -475,6 +547,41 @@ async def fees_summary():
     }
 
 
+class PaymentStatusUpdate(BaseModel):
+    """Admin: correct payment status (e.g. revert to unpaid)."""
+    status: str = Field(..., pattern="^(Paid|Due|Overdue)$")
+
+
+@app.patch("/payments/{payment_id}", response_model=PaymentResponse)
+async def update_payment_status(payment_id: str, body: PaymentStatusUpdate):
+    """Admin: edit payment status for corrections (e.g. revert Paid to Due)."""
+    from bson import ObjectId
+    try:
+        oid = ObjectId(payment_id)
+    except Exception:
+        raise HTTPException(status_code=400, detail="Invalid payment ID")
+    doc = await payments_collection.find_one({"_id": oid})
+    if not doc:
+        raise HTTPException(status_code=404, detail="Payment not found")
+    update = {"status": body.status}
+    if body.status != "Paid":
+        update["paid_at"] = None
+    await payments_collection.update_one({"_id": oid}, {"$set": update})
+    updated = await payments_collection.find_one({"_id": oid})
+    return PaymentResponse(
+        id=str(updated["_id"]),
+        member_id=updated["member_id"],
+        member_name=updated.get("member_name", ""),
+        amount=updated["amount"],
+        fee_type=updated["fee_type"],
+        period=updated.get("period"),
+        status=updated["status"],
+        due_date=_to_date(updated.get("due_date")),
+        paid_at=updated.get("paid_at"),
+        created_at=updated["created_at"],
+    )
+
+
 @app.post("/payments/pay", response_model=PaymentResponse)
 async def record_payment(member_id: str, payment_id: str, background_tasks: BackgroundTasks):
     """Record a payment (simulated). Sends payment-received notification."""
@@ -496,7 +603,7 @@ async def record_payment(member_id: str, payment_id: str, background_tasks: Back
     )
     member = await members_collection.find_one({"_id": ObjectId(member_id)})
     if member:
-        background_tasks.add_task(notify_payment_received, member.get("name", ""), doc["amount"], member.get("email", ""), member.get("phone", ""))
+        background_tasks.add_task(_notify_payment_received, member.get("name", ""), doc["amount"], member.get("email", ""), member.get("phone", ""))
     updated = await payments_collection.find_one({"_id": oid})
     return PaymentResponse(
         id=str(updated["_id"]),
@@ -513,34 +620,90 @@ async def record_payment(member_id: str, payment_id: str, background_tasks: Back
 
 
 @app.get("/analytics/dashboard")
-async def analytics_dashboard():
-    """Total Active/Inactive, Pending Fees, Regular vs PT split."""
+async def analytics_dashboard(date_from: str | None = None, date_to: str | None = None):
+    """
+    Total Active/Inactive, Total Collections (₹), Pending Dues, Regular vs PT split.
+    Optional date_from, date_to (YYYY-MM-DD): add attendance_count_in_range and payments_received_in_range for that period.
+    """
     from datetime import timezone
     active = await members_collection.count_documents({"status": "Active"})
     inactive = await members_collection.count_documents({"status": "Inactive"})
     regular = await members_collection.count_documents({"membership_type": "Regular"})
     pt = await members_collection.count_documents({"membership_type": "PT"})
-    pipeline = [{"$match": {"status": {"$in": ["Due", "Overdue"]}}}, {"$group": {"_id": None, "total": {"$sum": "$amount"}}}]
-    cur = payments_collection.aggregate(pipeline)
+    pipeline_pending = [{"$match": {"status": {"$in": ["Due", "Overdue"]}}}, {"$group": {"_id": None, "total": {"$sum": "$amount"}}}]
+    cur = payments_collection.aggregate(pipeline_pending)
     pending_fees = 0
     async for row in cur:
         pending_fees = row["total"]
         break
-    return {
+    pipeline_paid = [{"$match": {"status": "Paid"}}, {"$group": {"_id": None, "total": {"$sum": "$amount"}}}]
+    cur2 = payments_collection.aggregate(pipeline_paid)
+    total_collections = 0
+    async for row in cur2:
+        total_collections = row["total"]
+        break
+    out = {
         "active_members": active,
         "inactive_members": inactive,
         "regular_count": regular,
         "pt_count": pt,
         "pending_fees_amount": pending_fees,
+        "total_collections": total_collections,
     }
+    if date_from and date_to:
+        if len(date_from) != 10 or date_from[4] != "-" or date_from[7] != "-" or len(date_to) != 10 or date_to[4] != "-" or date_to[7] != "-":
+            raise HTTPException(status_code=400, detail="date_from and date_to must be YYYY-MM-DD")
+        from datetime import datetime as dt_parse
+        start = dt_parse.strptime(date_from + " 00:00:00", "%Y-%m-%d %H:%M:%S").replace(tzinfo=IST)
+        end = dt_parse.strptime(date_to + " 23:59:59", "%Y-%m-%d %H:%M:%S").replace(tzinfo=IST)
+        start_utc = start.astimezone(timezone.utc)
+        end_utc = end.astimezone(timezone.utc)
+        attendance_in_range = await attendance_collection.count_documents({
+            "check_in_at_utc": {"$gte": start_utc, "$lte": end_utc},
+        })
+        pipeline_paid_range = [
+            {"$match": {"status": "Paid", "paid_at": {"$gte": start_utc, "$lte": end_utc}}},
+            {"$group": {"_id": None, "total": {"$sum": "$amount"}, "count": {"$sum": 1}}},
+        ]
+        cur3 = payments_collection.aggregate(pipeline_paid_range)
+        payments_in_range_amt = 0
+        payments_in_range_count = 0
+        async for row in cur3:
+            payments_in_range_amt = row.get("total", 0)
+            payments_in_range_count = row.get("count", 0)
+            break
+        out["attendance_count_in_range"] = attendance_in_range
+        out["payments_received_in_range"] = payments_in_range_amt
+        out["payments_count_in_range"] = payments_in_range_count
+        out["date_from"] = date_from
+        out["date_to"] = date_to
+    return out
 
 
 @app.post("/admin/run-fee-reminders")
 async def run_fee_reminders(background_tasks: BackgroundTasks):
-    """Trigger fee-due reminders (BackgroundTasks). Simulated WhatsApp/Email."""
-    # In production: find Due/Overdue payments, send reminders
-    background_tasks.add_task(lambda: None)  # placeholder
-    return {"message": "Fee reminders queued."}
+    """Send Month-End Reminders: simulated WhatsApp to all members with unpaid fees."""
+    from utils import send_notification
+    from bson import ObjectId
+    cursor = payments_collection.find({"status": {"$in": ["Due", "Overdue"]}})
+    member_pending = {}
+    async for doc in cursor:
+        mid = doc["member_id"]
+        if mid not in member_pending:
+            member_pending[mid] = 0
+        member_pending[mid] += doc["amount"]
+    sent = 0
+    for mid, pending_amount in member_pending.items():
+        member = await members_collection.find_one({"_id": ObjectId(mid)})
+        if member:
+            background_tasks.add_task(
+                send_notification,
+                "fees_due",
+                {"name": member.get("name", ""), "phone": member.get("phone", ""), "email": member.get("email", "")},
+                {"pending_amount": pending_amount},
+            )
+            sent += 1
+    return {"message": f"Month-end reminders queued for {sent} member(s)."}
 
 
 @app.post("/admin/seed-inactive-test")
@@ -582,6 +745,144 @@ async def seed_inactive_test():
         result = await members_collection.insert_one(doc)
         inserted.append({"id": str(result.inserted_id), "name": doc["name"]})
     return {"message": "Created 2 test members with last check-in 91 days ago.", "members": inserted}
+
+
+# ---------- Billing / Invoices ----------
+
+class BillingIssueWalkIn(BaseModel):
+    """Walk-in: new member + first bill (Registration + 1st Month)."""
+    name: str = Field(..., min_length=1)
+    phone: str = Field(..., min_length=1)
+    email: EmailStr
+    membership_type: MembershipType
+    batch: Batch
+
+
+@app.post("/billing/issue", response_model=InvoiceResponse)
+async def billing_issue(body: BillingIssueWalkIn):
+    """Walk-in flow: create member and issue first bill (Registration + 1st Month)."""
+    from datetime import timezone
+    from bson import ObjectId
+    doc = {
+        "name": body.name,
+        "phone": body.phone,
+        "email": body.email,
+        "membership_type": body.membership_type.value,
+        "batch": body.batch.value,
+        "status": "Active",
+        "created_at": datetime.now(timezone.utc),
+    }
+    result = await members_collection.insert_one(doc)
+    mid = str(result.inserted_id)
+    reg_amount = REGISTRATION_FEE
+    monthly_amount = MONTHLY_FEE_PT if body.membership_type == MembershipType.pt else MONTHLY_FEE_REGULAR
+    total = reg_amount + monthly_amount
+    items = [
+        {"description": "Registration", "amount": reg_amount},
+        {"description": "First Month", "amount": monthly_amount},
+    ]
+    inv_doc = {
+        "member_id": mid,
+        "member_name": body.name,
+        "items": items,
+        "total": total,
+        "status": "Unpaid",
+        "issued_at": datetime.now(timezone.utc),
+        "paid_at": None,
+    }
+    inv_result = await invoices_collection.insert_one(inv_doc)
+    due_dt = datetime(today_ist().year, today_ist().month, today_ist().day, tzinfo=timezone.utc)
+    period = today_ist().strftime("%Y-%m")
+    await payments_collection.insert_many([
+        {"member_id": mid, "member_name": body.name, "amount": reg_amount, "fee_type": "registration", "period": None, "status": "Due", "due_date": due_dt, "paid_at": None, "created_at": datetime.now(timezone.utc)},
+        {"member_id": mid, "member_name": body.name, "amount": monthly_amount, "fee_type": "monthly", "period": period, "status": "Due", "due_date": due_dt, "paid_at": None, "created_at": datetime.now(timezone.utc)},
+    ])
+    _notify_registration(body.name, body.email, body.phone)
+    return InvoiceResponse(
+        id=str(inv_result.inserted_id),
+        member_id=mid,
+        member_name=body.name,
+        items=items,
+        total=total,
+        status="Unpaid",
+        issued_at=inv_doc["issued_at"],
+        paid_at=None,
+    )
+
+
+@app.get("/billing/history", response_model=list[InvoiceResponse])
+async def billing_history(member_id: str | None = None):
+    """List invoices. Optional filter by member_id."""
+    q = {} if member_id is None else {"member_id": member_id}
+    cursor = invoices_collection.find(q).sort("issued_at", -1)
+    out = []
+    async for doc in cursor:
+        out.append(InvoiceResponse(
+            id=str(doc["_id"]),
+            member_id=doc["member_id"],
+            member_name=doc.get("member_name", ""),
+            items=doc.get("items", []),
+            total=doc["total"],
+            status=doc.get("status", "Unpaid"),
+            issued_at=doc["issued_at"],
+            paid_at=doc.get("paid_at"),
+        ))
+    return out
+
+
+@app.post("/billing/pay", response_model=InvoiceResponse)
+async def billing_pay(invoice_id: str, background_tasks: BackgroundTasks):
+    """Mark invoice as paid. Simulated UPI/cash. Sends payment notification."""
+    from bson import ObjectId
+    from datetime import timezone
+    try:
+        oid = ObjectId(invoice_id)
+    except Exception:
+        raise HTTPException(status_code=400, detail="Invalid invoice ID")
+    doc = await invoices_collection.find_one({"_id": oid})
+    if not doc:
+        raise HTTPException(status_code=404, detail="Invoice not found")
+    if doc.get("status") == "Paid":
+        raise HTTPException(status_code=400, detail="Already paid")
+    now = datetime.now(timezone.utc)
+    await invoices_collection.update_one({"_id": oid}, {"$set": {"status": "Paid", "paid_at": now}})
+    member = await members_collection.find_one({"_id": ObjectId(doc["member_id"])})
+    if member:
+        background_tasks.add_task(_notify_payment_received, member.get("name", ""), doc["total"], member.get("email", ""), member.get("phone", ""))
+    updated = await invoices_collection.find_one({"_id": oid})
+    return InvoiceResponse(
+        id=str(updated["_id"]),
+        member_id=updated["member_id"],
+        member_name=updated.get("member_name", ""),
+        items=updated.get("items", []),
+        total=updated["total"],
+        status=updated["status"],
+        issued_at=updated["issued_at"],
+        paid_at=updated.get("paid_at"),
+    )
+
+
+@app.get("/export/billing")
+async def export_billing_excel():
+    """Export billing/invoices to Excel."""
+    import pandas as pd
+    cursor = invoices_collection.find().sort("issued_at", -1)
+    rows = []
+    async for doc in cursor:
+        rows.append({
+            "id": str(doc["_id"]),
+            "member_id": doc.get("member_id", ""),
+            "member_name": doc.get("member_name", ""),
+            "total": doc.get("total", 0),
+            "status": doc.get("status", ""),
+            "issued_at": str(doc.get("issued_at", "")),
+            "paid_at": str(doc.get("paid_at", "")) if doc.get("paid_at") else "",
+        })
+    df = pd.DataFrame(rows)
+    buf = BytesIO()
+    df.to_excel(buf, index=False, engine="openpyxl")
+    buf.seek(0)
+    return StreamingResponse(buf, media_type="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet", headers={"Content-Disposition": "attachment; filename=billing_history.xlsx"})
 
 
 # ---------- Export to Excel ----------

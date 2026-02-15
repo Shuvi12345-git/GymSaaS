@@ -1,9 +1,10 @@
 import 'dart:convert';
 
 import 'package:flutter/material.dart';
-import 'package:google_fonts/google_fonts.dart';
-import 'package:http/http.dart' as http;
+import 'package:flutter/services.dart';
 
+import 'core/api_client.dart';
+import 'theme/app_theme.dart';
 import 'screens/admin_dashboard_screen.dart';
 import 'screens/attendance_report_screen.dart';
 import 'screens/dashboard_screen.dart';
@@ -11,6 +12,7 @@ import 'screens/member_login_screen.dart';
 import 'screens/registration_screen.dart';
 
 void main() {
+  WidgetsFlutterBinding.ensureInitialized();
   runApp(const MyApp());
 }
 
@@ -19,72 +21,11 @@ class MyApp extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    const deepBlack = Color(0xFF0D0D0D);
-    const gold = Color(0xFFD4AF37);
-    const goldLight = Color(0xFFE8C547);
-
     return MaterialApp(
-      title: 'GymSaaS',
+      title: 'Jupiter Arena',
       debugShowCheckedModeBanner: false,
-      theme: ThemeData(
-        useMaterial3: true,
-        brightness: Brightness.dark,
-        scaffoldBackgroundColor: deepBlack,
-        textTheme: GoogleFonts.poppinsTextTheme(ThemeData.dark().textTheme),
-        colorScheme: ColorScheme.dark(
-          primary: gold,
-          onPrimary: deepBlack,
-          surface: deepBlack,
-          onSurface: Colors.white,
-          secondary: goldLight,
-        ),
-        appBarTheme: const AppBarTheme(
-          backgroundColor: deepBlack,
-          foregroundColor: gold,
-          elevation: 0,
-          centerTitle: true,
-        ),
-        elevatedButtonTheme: ElevatedButtonThemeData(
-          style: ElevatedButton.styleFrom(
-            backgroundColor: gold,
-            foregroundColor: deepBlack,
-            elevation: 2,
-            padding: const EdgeInsets.symmetric(horizontal: 32, vertical: 16),
-            shape: RoundedRectangleBorder(
-              borderRadius: BorderRadius.circular(12),
-            ),
-          ),
-        ),
-        filledButtonTheme: FilledButtonThemeData(
-          style: FilledButton.styleFrom(
-            backgroundColor: gold,
-            foregroundColor: deepBlack,
-            padding: const EdgeInsets.symmetric(horizontal: 24, vertical: 16),
-            shape: RoundedRectangleBorder(
-              borderRadius: BorderRadius.circular(12),
-            ),
-          ),
-        ),
-        inputDecorationTheme: InputDecorationTheme(
-          labelStyle: const TextStyle(color: gold),
-          focusedBorder: const OutlineInputBorder(borderSide: BorderSide(color: gold, width: 2)),
-          enabledBorder: OutlineInputBorder(borderSide: BorderSide(color: Colors.grey.shade600)),
-          border: const OutlineInputBorder(),
-        ),
-        snackBarTheme: SnackBarThemeData(
-          backgroundColor: gold,
-          contentTextStyle: const TextStyle(
-            color: Color(0xFF0D0D0D),
-            fontWeight: FontWeight.w600,
-            fontSize: 15,
-          ),
-          behavior: SnackBarBehavior.floating,
-          shape: RoundedRectangleBorder(
-            borderRadius: BorderRadius.circular(12),
-          ),
-        ),
-      ),
-      home: const MyHomePage(title: 'Gym SaaS'),
+      theme: AppTheme.light,
+      home: const MyHomePage(title: 'Jupiter Arena'),
     );
   }
 }
@@ -101,14 +42,20 @@ class MyHomePage extends StatefulWidget {
 class _MyHomePageState extends State<MyHomePage> {
   bool _isPinging = false;
 
+  @override
+  void initState() {
+    super.initState();
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      precacheImage(const AssetImage('assets/logo.png'), context);
+    });
+  }
+
   Future<void> _pingServer() async {
     if (_isPinging) return;
     setState(() => _isPinging = true);
 
     try {
-      final response = await http
-          .get(Uri.parse('http://localhost:8000/'))
-          .timeout(const Duration(seconds: 5));
+      final response = await ApiClient.instance.get('/', useCache: false);
 
       if (!mounted) return;
       final data = jsonDecode(response.body) as Map<String, dynamic>;
@@ -150,14 +97,8 @@ class _MyHomePageState extends State<MyHomePage> {
     return Scaffold(
       appBar: AppBar(
         leading: Padding(
-          padding: const EdgeInsets.all(12),
-          child: Container(
-            decoration: BoxDecoration(
-              color: const Color(0xFFD4AF37),
-              borderRadius: BorderRadius.circular(8),
-            ),
-            child: const Icon(Icons.fitness_center, color: Color(0xFF0D0D0D)),
-          ),
+          padding: const EdgeInsets.all(8),
+          child: _JupiterLogo(size: 40),
         ),
         title: Text(widget.title),
       ),
@@ -240,6 +181,32 @@ class _MyHomePageState extends State<MyHomePage> {
           ],
         ),
         ),
+      ),
+    );
+  }
+}
+
+/// Jupiter Arena logo: asset or placeholder.
+class _JupiterLogo extends StatelessWidget {
+  final double size;
+
+  const _JupiterLogo({this.size = 48});
+
+  @override
+  Widget build(BuildContext context) {
+    return Image.asset(
+      'assets/logo.png',
+      height: size,
+      width: size,
+      fit: BoxFit.contain,
+      errorBuilder: (_, __, ___) => Container(
+        height: size,
+        width: size,
+        decoration: BoxDecoration(
+          color: AppTheme.primary.withOpacity(0.2),
+          borderRadius: BorderRadius.circular(8),
+        ),
+        child: Icon(Icons.fitness_center, color: AppTheme.primary, size: size * 0.6),
       ),
     );
   }

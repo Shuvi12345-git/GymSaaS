@@ -6,13 +6,14 @@ import 'package:google_fonts/google_fonts.dart';
 import 'package:http/http.dart' as http;
 import 'package:url_launcher/url_launcher.dart';
 
+import '../core/api_client.dart';
+import '../theme/app_theme.dart';
 import 'attendance_report_screen.dart';
+import 'billing_screen.dart';
 import 'dashboard_screen.dart';
 import 'registration_screen.dart';
 
-const _apiBase = 'http://localhost:8000';
-const _deepBlack = Color(0xFF0D0D0D);
-const _gold = Color(0xFFD4AF37);
+const _apiBase = ApiClient.baseUrl;
 const _padding = 20.0;
 
 class AdminDashboardScreen extends StatefulWidget {
@@ -25,28 +26,46 @@ class AdminDashboardScreen extends StatefulWidget {
 class _AdminDashboardScreenState extends State<AdminDashboardScreen> {
   int _selectedIndex = 0;
   int _membersRefreshKey = 0;
+  final List<Widget?> _tabBodies = [null, null, null, null];
+
+  Widget _buildTabAt(int index) {
+    switch (index) {
+      case 0:
+        return _OverviewTab();
+      case 1:
+        return _MembersTab(
+          refreshKey: _membersRefreshKey,
+          onRegisterPressed: () async {
+            await Navigator.push(context, MaterialPageRoute(builder: (_) => const RegistrationScreen()));
+            setState(() => _membersRefreshKey++);
+          },
+        );
+      case 2:
+        return _FeesTab();
+      case 3:
+        return const _BillingTab();
+      default:
+        return const SizedBox.shrink();
+    }
+  }
 
   @override
   Widget build(BuildContext context) {
+    if (_tabBodies[_selectedIndex] == null) {
+      _tabBodies[_selectedIndex] = _buildTabAt(_selectedIndex);
+    }
     return Scaffold(
       appBar: AppBar(
         title: Row(
           children: [
-            Container(
-              width: 36,
-              height: 36,
-              margin: const EdgeInsets.only(right: 12),
-              decoration: BoxDecoration(
-                color: _gold,
-                borderRadius: BorderRadius.circular(8),
-              ),
-              child: const Icon(Icons.fitness_center, color: _deepBlack, size: 22),
-            ),
-            Text('GymSaaS Admin', style: GoogleFonts.poppins(fontWeight: FontWeight.w600)),
+            Image.asset('assets/logo.png', height: 36, width: 36, fit: BoxFit.contain, errorBuilder: (_, __, ___) => Container(
+              width: 36, height: 36, decoration: BoxDecoration(color: AppTheme.primary.withOpacity(0.2), borderRadius: BorderRadius.circular(8)),
+              child: const Icon(Icons.fitness_center, color: AppTheme.primary, size: 22),
+            )),
+            const SizedBox(width: 12),
+            Text('Jupiter Arena Admin', style: GoogleFonts.poppins(fontWeight: FontWeight.w600)),
           ],
         ),
-        backgroundColor: _deepBlack,
-        foregroundColor: _gold,
         actions: [
           IconButton(
             icon: const Icon(FontAwesomeIcons.calendarDays),
@@ -63,27 +82,26 @@ class _AdminDashboardScreenState extends State<AdminDashboardScreen> {
         child: IndexedStack(
           index: _selectedIndex,
           children: [
-            _OverviewTab(),
-            _MembersTab(
-              refreshKey: _membersRefreshKey,
-              onRegisterPressed: () async {
-                await Navigator.push(context, MaterialPageRoute(builder: (_) => const RegistrationScreen()));
-                setState(() => _membersRefreshKey++);
-              },
-            ),
-            _FeesTab(),
+            _tabBodies[0] ?? const SizedBox.shrink(),
+            _tabBodies[1] ?? const SizedBox.shrink(),
+            _tabBodies[2] ?? const SizedBox.shrink(),
+            _tabBodies[3] ?? const SizedBox.shrink(),
           ],
         ),
       ),
       bottomNavigationBar: NavigationBar(
         selectedIndex: _selectedIndex,
-        onDestinationSelected: (i) => setState(() => _selectedIndex = i),
-        backgroundColor: const Color(0xFF1A1A1A),
-        indicatorColor: _gold,
+        onDestinationSelected: (i) {
+          if (_tabBodies[i] == null) _tabBodies[i] = _buildTabAt(i);
+          setState(() => _selectedIndex = i);
+        },
+        backgroundColor: AppTheme.surfaceVariant,
+        indicatorColor: AppTheme.primary,
         destinations: const [
           NavigationDestination(icon: Icon(FontAwesomeIcons.chartPie), label: 'Overview'),
           NavigationDestination(icon: Icon(FontAwesomeIcons.users), label: 'Members'),
           NavigationDestination(icon: Icon(FontAwesomeIcons.indianRupeeSign), label: 'Fees'),
+          NavigationDestination(icon: Icon(FontAwesomeIcons.fileInvoiceDollar), label: 'Billing'),
         ],
       ),
     );
@@ -92,7 +110,7 @@ class _AdminDashboardScreenState extends State<AdminDashboardScreen> {
   void _showExportMenu() {
     showModalBottomSheet(
       context: context,
-      backgroundColor: const Color(0xFF1A1A1A),
+      backgroundColor: AppTheme.surfaceVariant,
       shape: const RoundedRectangleBorder(borderRadius: BorderRadius.vertical(top: Radius.circular(16))),
       builder: (ctx) => SafeArea(
         child: Padding(
@@ -101,7 +119,7 @@ class _AdminDashboardScreenState extends State<AdminDashboardScreen> {
             mainAxisSize: MainAxisSize.min,
             children: [
               ListTile(
-                leading: const Icon(FontAwesomeIcons.users, color: _gold),
+                leading: const Icon(FontAwesomeIcons.users, color: AppTheme.primary),
                 title: const Text('Export Members to Excel'),
                 onTap: () {
                   Navigator.pop(ctx);
@@ -109,11 +127,19 @@ class _AdminDashboardScreenState extends State<AdminDashboardScreen> {
                 },
               ),
               ListTile(
-                leading: const Icon(FontAwesomeIcons.fileInvoiceDollar, color: _gold),
+                leading: const Icon(FontAwesomeIcons.fileInvoiceDollar, color: AppTheme.primary),
                 title: const Text('Export Payments to Excel'),
                 onTap: () {
                   Navigator.pop(ctx);
                   _downloadExport('/export/payments', 'payments.xlsx');
+                },
+              ),
+              ListTile(
+                leading: const Icon(FontAwesomeIcons.fileExport, color: AppTheme.primary),
+                title: const Text('Export Billing to Excel'),
+                onTap: () {
+                  Navigator.pop(ctx);
+                  _downloadExport('/export/billing', 'billing_history.xlsx');
                 },
               ),
             ],
@@ -138,6 +164,15 @@ class _AdminDashboardScreenState extends State<AdminDashboardScreen> {
   }
 }
 
+class _BillingTab extends StatelessWidget {
+  const _BillingTab();
+
+  @override
+  Widget build(BuildContext context) {
+    return const BillingScreen();
+  }
+}
+
 class _OverviewTab extends StatefulWidget {
   @override
   State<_OverviewTab> createState() => _OverviewTabState();
@@ -146,7 +181,10 @@ class _OverviewTab extends StatefulWidget {
 class _OverviewTabState extends State<_OverviewTab> {
   Map<String, dynamic>? _data;
   bool _loading = true;
+  bool _sendingReminders = false;
   String? _error;
+  DateTime? _dateFrom;
+  DateTime? _dateTo;
 
   @override
   void initState() {
@@ -157,7 +195,14 @@ class _OverviewTabState extends State<_OverviewTab> {
   Future<void> _load() async {
     setState(() { _loading = true; _error = null; });
     try {
-      final r = await http.get(Uri.parse('$_apiBase/analytics/dashboard')).timeout(const Duration(seconds: 10));
+      Map<String, String>? params;
+      if (_dateFrom != null && _dateTo != null) {
+        params = {
+          'date_from': '${_dateFrom!.year}-${_dateFrom!.month.toString().padLeft(2, '0')}-${_dateFrom!.day.toString().padLeft(2, '0')}',
+          'date_to': '${_dateTo!.year}-${_dateTo!.month.toString().padLeft(2, '0')}-${_dateTo!.day.toString().padLeft(2, '0')}',
+        };
+      }
+      final r = await ApiClient.instance.get('/analytics/dashboard', queryParameters: params, useCache: true);
       if (!mounted) return;
       if (r.statusCode >= 200 && r.statusCode < 300) {
         setState(() { _data = jsonDecode(r.body) as Map<String, dynamic>; _loading = false; });
@@ -169,24 +214,102 @@ class _OverviewTabState extends State<_OverviewTab> {
     }
   }
 
+  Future<void> _pickDateRange() async {
+    final from = _dateFrom ?? DateTime.now().subtract(const Duration(days: 30));
+    final to = _dateTo ?? DateTime.now();
+    final pickedFrom = await showDatePicker(context: context, initialDate: from, firstDate: DateTime(2020), lastDate: DateTime.now());
+    if (pickedFrom == null || !mounted) return;
+    final pickedTo = await showDatePicker(context: context, initialDate: to.isAfter(pickedFrom) ? to : pickedFrom, firstDate: pickedFrom, lastDate: DateTime.now());
+    if (pickedTo == null || !mounted) return;
+    setState(() {
+      _dateFrom = pickedFrom;
+      _dateTo = pickedTo;
+    });
+    _load();
+  }
+
+  void _clearDateRange() {
+    setState(() { _dateFrom = null; _dateTo = null; });
+    _load();
+  }
+
+  Future<void> _sendReminders() async {
+    setState(() => _sendingReminders = true);
+    try {
+      final r = await ApiClient.instance.post('/admin/run-fee-reminders');
+      if (mounted) {
+        final body = r.statusCode == 200 ? jsonDecode(r.body) as Map<String, dynamic>? : null;
+        ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text(body?['message']?.toString() ?? 'Done')));
+      }
+    } catch (_) {
+      if (mounted) ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text('Failed to send reminders')));
+    }
+    if (mounted) setState(() => _sendingReminders = false);
+  }
+
   @override
   Widget build(BuildContext context) {
-    if (_loading) return const Center(child: CircularProgressIndicator(color: _gold));
+    if (_loading) return const Center(child: CircularProgressIndicator(color: AppTheme.primary));
     if (_error != null) return Center(child: Text(_error!, style: const TextStyle(color: Colors.grey)));
     final d = _data!;
     return RefreshIndicator(
-      onRefresh: _load,
-      color: _gold,
+      onRefresh: () {
+        ApiClient.instance.invalidateCache();
+        return _load();
+      },
+      color: AppTheme.primary,
       child: SingleChildScrollView(
         padding: const EdgeInsets.only(bottom: _padding),
         child: Column(
           crossAxisAlignment: CrossAxisAlignment.stretch,
           children: [
+            Row(
+              children: [
+                OutlinedButton.icon(
+                  onPressed: _pickDateRange,
+                  icon: const Icon(Icons.date_range, size: 18),
+                  label: Text(_dateFrom != null && _dateTo != null
+                      ? '${_dateFrom!.day}/${_dateFrom!.month} - ${_dateTo!.day}/${_dateTo!.month}'
+                      : 'Past period'),
+                ),
+                if (_dateFrom != null && _dateTo != null)
+                  IconButton(
+                    onPressed: _clearDateRange,
+                    icon: const Icon(Icons.clear),
+                    tooltip: 'Clear date range',
+                  ),
+              ],
+            ),
+            if (d['date_from'] != null && d['date_to'] != null) ...[
+              const SizedBox(height: 12),
+              Row(
+                children: [
+                  Expanded(
+                    child: _AnalyticsCard(
+                      title: 'Attendance (period)',
+                      value: '${d['attendance_count_in_range'] ?? 0}',
+                      icon: FontAwesomeIcons.userCheck,
+                      color: AppTheme.primary,
+                    ),
+                  ),
+                  const SizedBox(width: 16),
+                  Expanded(
+                    child: _AnalyticsCard(
+                      title: 'Payments received (₹)',
+                      value: '${d['payments_received_in_range'] ?? 0}',
+                      icon: FontAwesomeIcons.indianRupeeSign,
+                      color: AppTheme.success,
+                    ),
+                  ),
+                ],
+              ),
+              const SizedBox(height: 16),
+            ],
             _AnalyticsCard(
               title: 'Active Members',
               value: '${d['active_members'] ?? 0}',
               icon: FontAwesomeIcons.userCheck,
-              color: const Color(0xFF22C55E),
+              color: AppTheme.success,
             ),
             const SizedBox(height: 16),
             _AnalyticsCard(
@@ -197,10 +320,17 @@ class _OverviewTabState extends State<_OverviewTab> {
             ),
             const SizedBox(height: 16),
             _AnalyticsCard(
-              title: 'Pending Fees (₹)',
-              value: '${d['pending_fees_amount'] ?? 0}',
+              title: 'Total Collections (₹)',
+              value: '${d['total_collections'] ?? 0}',
               icon: FontAwesomeIcons.indianRupeeSign,
-              color: _gold,
+              color: AppTheme.primary,
+            ),
+            const SizedBox(height: 16),
+            _AnalyticsCard(
+              title: 'Pending Dues (₹)',
+              value: '${d['pending_fees_amount'] ?? 0}',
+              icon: FontAwesomeIcons.clock,
+              color: Colors.orange,
             ),
             const SizedBox(height: 16),
             Row(
@@ -210,7 +340,7 @@ class _OverviewTabState extends State<_OverviewTab> {
                     title: 'Regular',
                     value: '${d['regular_count'] ?? 0}',
                     icon: FontAwesomeIcons.users,
-                    color: _gold,
+                    color: AppTheme.primary,
                   ),
                 ),
                 const SizedBox(width: 16),
@@ -219,10 +349,17 @@ class _OverviewTabState extends State<_OverviewTab> {
                     title: 'PT',
                     value: '${d['pt_count'] ?? 0}',
                     icon: FontAwesomeIcons.dumbbell,
-                    color: _gold,
+                    color: AppTheme.primary,
                   ),
                 ),
               ],
+            ),
+            const SizedBox(height: 24),
+            FilledButton.icon(
+              onPressed: _sendingReminders ? null : _sendReminders,
+              icon: _sendingReminders ? const SizedBox(width: 20, height: 20, child: CircularProgressIndicator(strokeWidth: 2)) : const Icon(FontAwesomeIcons.whatsapp),
+              label: Text(_sendingReminders ? 'Sending...' : 'Send Month-End Reminders'),
+              style: FilledButton.styleFrom(backgroundColor: AppTheme.primary, foregroundColor: AppTheme.onPrimary),
             ),
           ],
         ),
@@ -242,8 +379,8 @@ class _AnalyticsCard extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     return Card(
-      color: const Color(0xFF1A1A1A),
-      shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16), side: BorderSide(color: _gold.withOpacity(0.5))),
+      color: AppTheme.surfaceVariant,
+      shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16), side: BorderSide(color: color.withOpacity(0.5))),
       child: Padding(
         padding: const EdgeInsets.all(_padding),
         child: Row(
@@ -258,9 +395,9 @@ class _AnalyticsCard extends StatelessWidget {
               child: Column(
                 crossAxisAlignment: CrossAxisAlignment.start,
                 children: [
-                  Text(title, style: GoogleFonts.poppins(color: Colors.grey.shade400, fontSize: 14)),
+                  Text(title, style: GoogleFonts.poppins(color: Colors.grey.shade600, fontSize: 14)),
                   const SizedBox(height: 4),
-                  Text(value, style: GoogleFonts.poppins(color: Colors.white, fontSize: 24, fontWeight: FontWeight.bold)),
+                  Text(value, style: GoogleFonts.poppins(color: AppTheme.onSurface, fontSize: 24, fontWeight: FontWeight.bold)),
                 ],
               ),
             ),
@@ -287,7 +424,7 @@ class _MembersTab extends StatelessWidget {
             onPressed: onRegisterPressed,
             icon: const Icon(FontAwesomeIcons.userPlus, size: 18),
             label: const Text('Register Member'),
-            style: FilledButton.styleFrom(backgroundColor: _gold, foregroundColor: _deepBlack),
+            style: FilledButton.styleFrom(backgroundColor: AppTheme.primary, foregroundColor: AppTheme.onPrimary),
           ),
         ),
         const SizedBox(height: 16),
@@ -316,8 +453,8 @@ class _FeesTabState extends State<_FeesTab> {
   Future<void> _load() async {
     setState(() => _loading = true);
     try {
-      final r1 = await http.get(Uri.parse('$_apiBase/payments/fees-summary')).timeout(const Duration(seconds: 10));
-      final r2 = await http.get(Uri.parse('$_apiBase/payments')).timeout(const Duration(seconds: 10));
+      final r1 = await ApiClient.instance.get('/payments/fees-summary', useCache: true);
+      final r2 = await ApiClient.instance.get('/payments', useCache: true);
       if (!mounted) return;
       if (r1.statusCode >= 200 && r1.statusCode < 300)
         _summary = jsonDecode(r1.body) as Map<String, dynamic>;
@@ -329,13 +466,16 @@ class _FeesTabState extends State<_FeesTab> {
 
   @override
   Widget build(BuildContext context) {
-    if (_loading) return const Center(child: CircularProgressIndicator(color: _gold));
+    if (_loading) return const Center(child: CircularProgressIndicator(color: AppTheme.primary));
     final paid = _summary?['paid'] as Map<String, dynamic>? ?? {};
     final due = _summary?['due'] as Map<String, dynamic>? ?? {};
     final overdue = _summary?['overdue'] as Map<String, dynamic>? ?? {};
     return RefreshIndicator(
-      onRefresh: _load,
-      color: _gold,
+      onRefresh: () {
+        ApiClient.instance.invalidateCache();
+        return _load();
+      },
+      color: AppTheme.primary,
       child: SingleChildScrollView(
         padding: const EdgeInsets.only(bottom: _padding),
         child: Column(
@@ -343,32 +483,43 @@ class _FeesTabState extends State<_FeesTab> {
           children: [
             Row(
               children: [
-                Expanded(child: _FeeChip('Paid', paid['count'] ?? 0, paid['total_amount'] ?? 0, const Color(0xFF22C55E))),
+                Expanded(child: _FeeChip('Paid', paid['count'] ?? 0, paid['total_amount'] ?? 0, AppTheme.success)),
                 const SizedBox(width: 12),
-                Expanded(child: _FeeChip('Due', due['count'] ?? 0, due['total_amount'] ?? 0, _gold)),
+                Expanded(child: _FeeChip('Due', due['count'] ?? 0, due['total_amount'] ?? 0, AppTheme.primary)),
                 const SizedBox(width: 12),
                 Expanded(child: _FeeChip('Overdue', overdue['count'] ?? 0, overdue['total_amount'] ?? 0, Colors.orange)),
               ],
             ),
             const SizedBox(height: 24),
-            Text('All Payments', style: GoogleFonts.poppins(fontSize: 18, fontWeight: FontWeight.w600, color: Colors.white)),
+            Text('All Payments', style: GoogleFonts.poppins(fontSize: 18, fontWeight: FontWeight.w600, color: AppTheme.onSurface)),
             const SizedBox(height: 12),
             ...(_payments.map((p) {
               final map = p as Map<String, dynamic>;
+              final pid = map['id'] as String? ?? '';
               return Card(
-                color: const Color(0xFF1A1A1A),
+                color: AppTheme.surfaceVariant,
                 margin: const EdgeInsets.only(bottom: 8),
-                shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12), side: BorderSide(color: _gold.withOpacity(0.3))),
+                shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12), side: BorderSide(color: AppTheme.primary.withOpacity(0.3))),
                 child: ListTile(
                   contentPadding: const EdgeInsets.symmetric(horizontal: _padding, vertical: 8),
-                  title: Text(map['member_name'] ?? '', style: GoogleFonts.poppins(color: Colors.white, fontWeight: FontWeight.w500)),
-                  subtitle: Text('${map['fee_type']} • ${map['period'] ?? 'Registration'}', style: TextStyle(color: Colors.grey.shade400, fontSize: 12)),
-                  trailing: Column(
-                    mainAxisAlignment: MainAxisAlignment.center,
-                    crossAxisAlignment: CrossAxisAlignment.end,
+                  title: Text(map['member_name'] ?? '', style: GoogleFonts.poppins(color: AppTheme.onSurface, fontWeight: FontWeight.w500)),
+                  subtitle: Text('${map['fee_type']} • ${map['period'] ?? 'Registration'}', style: TextStyle(color: Colors.grey.shade600, fontSize: 12)),
+                  trailing: Row(
+                    mainAxisSize: MainAxisSize.min,
                     children: [
-                      Text('₹${map['amount']}', style: GoogleFonts.poppins(color: _gold, fontWeight: FontWeight.bold)),
-                      Text(map['status'] ?? '', style: TextStyle(color: _statusColor(map['status']), fontSize: 12)),
+                      Column(
+                        mainAxisAlignment: MainAxisAlignment.center,
+                        crossAxisAlignment: CrossAxisAlignment.end,
+                        children: [
+                          Text('₹${map['amount']}', style: GoogleFonts.poppins(color: AppTheme.primary, fontWeight: FontWeight.bold)),
+                          Text(map['status'] ?? '', style: TextStyle(color: _statusColor(map['status']), fontSize: 12)),
+                        ],
+                      ),
+                      IconButton(
+                        icon: const Icon(Icons.edit_outlined, size: 20),
+                        tooltip: 'Edit status',
+                        onPressed: () => _showEditPaymentStatus(context, map, _load),
+                      ),
                     ],
                   ),
                 ),
@@ -381,9 +532,67 @@ class _FeesTabState extends State<_FeesTab> {
   }
 
   Color _statusColor(String? s) {
-    if (s == 'Paid') return const Color(0xFF22C55E);
+    if (s == 'Paid') return AppTheme.success;
     if (s == 'Overdue') return Colors.orange;
-    return _gold;
+    return AppTheme.primary;
+  }
+
+  static void _showEditPaymentStatus(BuildContext context, Map<String, dynamic> payment, VoidCallback onSuccess) {
+    String selected = payment['status'] as String? ?? 'Due';
+    showDialog(
+      context: context,
+      builder: (ctx) => StatefulBuilder(
+        builder: (ctx, setState) => AlertDialog(
+          title: const Text('Edit payment status'),
+          content: Column(
+            mainAxisSize: MainAxisSize.min,
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              Text('${payment['member_name']} • ₹${payment['amount']} • ${payment['fee_type']}'),
+              const SizedBox(height: 16),
+              DropdownButtonFormField<String>(
+                value: selected,
+                decoration: const InputDecoration(labelText: 'Status'),
+                items: const [
+                  DropdownMenuItem(value: 'Due', child: Text('Due')),
+                  DropdownMenuItem(value: 'Overdue', child: Text('Overdue')),
+                  DropdownMenuItem(value: 'Paid', child: Text('Paid')),
+                ],
+                onChanged: (v) => setState(() => selected = v ?? selected),
+              ),
+            ],
+          ),
+          actions: [
+            TextButton(onPressed: () => Navigator.pop(ctx), child: const Text('Cancel')),
+            FilledButton(
+              onPressed: () async {
+                Navigator.pop(ctx);
+                final pid = payment['id'] as String?;
+                if (pid == null) return;
+                try {
+                  final r = await ApiClient.instance.patch(
+                    '/payments/$pid',
+                    headers: {'Content-Type': 'application/json'},
+                    body: jsonEncode({'status': selected}),
+                  );
+                  if (ctx.mounted) {
+                    if (r.statusCode >= 200 && r.statusCode < 300) {
+                      ScaffoldMessenger.of(ctx).showSnackBar(const SnackBar(content: Text('Payment status updated')));
+                      onSuccess();
+                    } else {
+                      ScaffoldMessenger.of(ctx).showSnackBar(SnackBar(content: Text('Failed: ${r.body}')));
+                    }
+                  }
+                } catch (e) {
+                  if (ctx.mounted) ScaffoldMessenger.of(ctx).showSnackBar(SnackBar(content: Text('Error: $e')));
+                }
+              },
+              child: const Text('Save'),
+            ),
+          ],
+        ),
+      ),
+    );
   }
 }
 
@@ -398,7 +607,7 @@ class _FeeChip extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     return Card(
-      color: const Color(0xFF1A1A1A),
+      color: AppTheme.surfaceVariant,
       shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12), side: BorderSide(color: color.withOpacity(0.5))),
       child: Padding(
         padding: const EdgeInsets.all(16),
@@ -407,8 +616,8 @@ class _FeeChip extends StatelessWidget {
           children: [
             Text(label, style: GoogleFonts.poppins(color: color, fontWeight: FontWeight.w600)),
             const SizedBox(height: 4),
-            Text('$count', style: GoogleFonts.poppins(color: Colors.white, fontSize: 20, fontWeight: FontWeight.bold)),
-            Text('₹$amount', style: GoogleFonts.poppins(color: Colors.grey.shade400, fontSize: 12)),
+            Text('$count', style: GoogleFonts.poppins(color: AppTheme.onSurface, fontSize: 20, fontWeight: FontWeight.bold)),
+            Text('₹$amount', style: GoogleFonts.poppins(color: Colors.grey.shade600, fontSize: 12)),
           ],
         ),
       ),

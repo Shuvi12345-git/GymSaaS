@@ -5,9 +5,10 @@ import 'package:font_awesome_flutter/font_awesome_flutter.dart';
 import 'package:google_fonts/google_fonts.dart';
 import 'package:http/http.dart' as http;
 
-const _apiBase = 'http://localhost:8000';
-const _deepBlack = Color(0xFF0D0D0D);
-const _gold = Color(0xFFD4AF37);
+import '../core/api_client.dart';
+import '../theme/app_theme.dart';
+
+const _apiBase = ApiClient.baseUrl;
 const _padding = 20.0;
 
 class MemberHomeScreen extends StatefulWidget {
@@ -34,7 +35,7 @@ class _MemberHomeScreenState extends State<MemberHomeScreen> {
     if (mid == null) return;
     setState(() => _loadingPayments = true);
     try {
-      final r = await http.get(Uri.parse('$_apiBase/payments?member_id=$mid')).timeout(const Duration(seconds: 10));
+      final r = await ApiClient.instance.get('/payments', queryParameters: {'member_id': mid}, useCache: false);
       if (mounted && r.statusCode >= 200 && r.statusCode < 300)
         setState(() { _payments = jsonDecode(r.body) as List<dynamic>; _loadingPayments = false; });
       else if (mounted) setState(() => _loadingPayments = false);
@@ -50,14 +51,22 @@ class _MemberHomeScreenState extends State<MemberHomeScreen> {
     final name = widget.member['name'] as String? ?? '';
     final batch = widget.member['batch'] as String? ?? '';
     final status = widget.member['status'] as String? ?? 'Active';
+    final lastAttendance = widget.member['last_attendance_date'] as String? ?? '';
     final workoutSchedule = widget.member['workout_schedule'] as String? ?? '';
     final dietChart = widget.member['diet_chart'] as String? ?? '';
 
     return Scaffold(
+      backgroundColor: AppTheme.surface,
       appBar: AppBar(
-        title: Text('My Gym', style: GoogleFonts.poppins()),
-        backgroundColor: _deepBlack,
-        foregroundColor: _gold,
+        title: Row(
+          children: [
+            Image.asset('assets/logo.png', height: 28, width: 28, fit: BoxFit.contain, errorBuilder: (_, __, ___) => const Icon(Icons.fitness_center, color: AppTheme.primary, size: 24)),
+            const SizedBox(width: 8),
+            Text('Jupiter Arena', style: GoogleFonts.poppins(fontWeight: FontWeight.w600, color: AppTheme.onSurface)),
+          ],
+        ),
+        backgroundColor: AppTheme.surface,
+        foregroundColor: AppTheme.onSurface,
       ),
       body: Padding(
         padding: const EdgeInsets.all(_padding),
@@ -66,17 +75,18 @@ class _MemberHomeScreenState extends State<MemberHomeScreen> {
             crossAxisAlignment: CrossAxisAlignment.stretch,
             children: [
               Card(
-                color: const Color(0xFF1A1A1A),
-                shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16), side: const BorderSide(color: _gold)),
+                color: AppTheme.surfaceVariant,
+                shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16), side: BorderSide(color: AppTheme.primary.withOpacity(0.5))),
                 child: Padding(
                   padding: const EdgeInsets.all(_padding),
                   child: Column(
                     crossAxisAlignment: CrossAxisAlignment.start,
                     children: [
-                      Text(name, style: GoogleFonts.poppins(fontSize: 22, fontWeight: FontWeight.bold, color: Colors.white)),
+                      Text(name, style: GoogleFonts.poppins(fontSize: 22, fontWeight: FontWeight.bold, color: AppTheme.onSurface)),
                       const SizedBox(height: 8),
-                      Text('Batch: $batch', style: GoogleFonts.poppins(color: _gold)),
-                      Text('Status: $status', style: GoogleFonts.poppins(color: Colors.grey.shade400)),
+                      Text('Batch: $batch', style: GoogleFonts.poppins(color: AppTheme.primary)),
+                      Text('Status: $status', style: GoogleFonts.poppins(color: Colors.grey.shade600)),
+                      if (lastAttendance.isNotEmpty) Text('Last check-in: $lastAttendance', style: GoogleFonts.poppins(color: Colors.grey.shade600, fontSize: 13)),
                     ],
                   ),
                 ),
@@ -84,25 +94,25 @@ class _MemberHomeScreenState extends State<MemberHomeScreen> {
               const SizedBox(height: 24),
               if (_isPT) ...[
                 if (workoutSchedule.isNotEmpty) ...[
-                  Text('Workout Schedule', style: GoogleFonts.poppins(fontWeight: FontWeight.w600, color: Colors.white)),
+                  Text('Workout Schedule', style: GoogleFonts.poppins(fontWeight: FontWeight.w600, color: AppTheme.onSurface)),
                   const SizedBox(height: 8),
                   Card(
-                    color: const Color(0xFF1A1A1A),
+                    color: AppTheme.surfaceVariant,
                     child: Padding(
                       padding: const EdgeInsets.all(_padding),
-                      child: SelectableText(workoutSchedule, style: GoogleFonts.poppins(color: Colors.grey.shade300)),
+                      child: SelectableText(workoutSchedule, style: GoogleFonts.poppins(color: AppTheme.onSurface)),
                     ),
                   ),
                   const SizedBox(height: 16),
                 ],
                 if (dietChart.isNotEmpty) ...[
-                  Text('Diet Chart', style: GoogleFonts.poppins(fontWeight: FontWeight.w600, color: Colors.white)),
+                  Text('Diet Chart', style: GoogleFonts.poppins(fontWeight: FontWeight.w600, color: AppTheme.onSurface)),
                   const SizedBox(height: 8),
                   Card(
-                    color: const Color(0xFF1A1A1A),
+                    color: AppTheme.surfaceVariant,
                     child: Padding(
                       padding: const EdgeInsets.all(_padding),
-                      child: SelectableText(dietChart, style: GoogleFonts.poppins(color: Colors.grey.shade300)),
+                      child: SelectableText(dietChart, style: GoogleFonts.poppins(color: AppTheme.onSurface)),
                     ),
                   ),
                   const SizedBox(height: 24),
@@ -110,7 +120,7 @@ class _MemberHomeScreenState extends State<MemberHomeScreen> {
                 if (workoutSchedule.isEmpty && dietChart.isEmpty)
                   Text('No schedule or diet assigned yet.', style: GoogleFonts.poppins(color: Colors.grey)),
               ] else ...[
-                Text('Workout Planner', style: GoogleFonts.poppins(fontWeight: FontWeight.w600, color: Colors.white)),
+                Text('Preset Weekly Workouts', style: GoogleFonts.poppins(fontWeight: FontWeight.w600, color: AppTheme.onSurface)),
                 const SizedBox(height: 12),
                 Wrap(
                   spacing: 12,
@@ -119,29 +129,29 @@ class _MemberHomeScreenState extends State<MemberHomeScreen> {
                     return ActionChip(
                       label: Text(preset),
                       onPressed: () => ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text('Selected: $preset'))),
-                      backgroundColor: _gold.withOpacity(0.2),
-                      side: const BorderSide(color: _gold),
+                      backgroundColor: AppTheme.primary.withOpacity(0.2),
+                      side: const BorderSide(color: AppTheme.primary),
                     );
                   }).toList(),
                 ),
                 const SizedBox(height: 24),
               ],
-              Text('Pay Fees', style: GoogleFonts.poppins(fontWeight: FontWeight.w600, color: Colors.white)),
+              Text('Pay Fees', style: GoogleFonts.poppins(fontWeight: FontWeight.w600, color: AppTheme.onSurface)),
               const SizedBox(height: 12),
               if (_loadingPayments)
-                const Center(child: CircularProgressIndicator(color: _gold))
+                const Center(child: CircularProgressIndicator(color: AppTheme.primary))
               else
                 ...(_payments.where((p) => (p['status'] == 'Due' || p['status'] == 'Overdue')).map((p) {
                   final map = p as Map<String, dynamic>;
                   return Card(
-                    color: const Color(0xFF1A1A1A),
+                    color: AppTheme.surfaceVariant,
                     margin: const EdgeInsets.only(bottom: 8),
                     child: ListTile(
-                      title: Text('${map['fee_type']} • ₹${map['amount']}', style: GoogleFonts.poppins(color: Colors.white)),
-                      subtitle: Text('${map['status']}', style: TextStyle(color: _gold)),
+                      title: Text('${map['fee_type']} • ₹${map['amount']}', style: GoogleFonts.poppins(color: AppTheme.onSurface)),
+                      subtitle: Text('${map['status']}', style: const TextStyle(color: AppTheme.primary)),
                       trailing: FilledButton(
                         onPressed: () => _showPayDialog(map),
-                        style: FilledButton.styleFrom(backgroundColor: _gold, foregroundColor: _deepBlack),
+                        style: FilledButton.styleFrom(backgroundColor: AppTheme.primary, foregroundColor: AppTheme.onPrimary),
                         child: const Text('Pay'),
                       ),
                     ),
@@ -160,9 +170,9 @@ class _MemberHomeScreenState extends State<MemberHomeScreen> {
     showDialog(
       context: context,
       builder: (ctx) => AlertDialog(
-        backgroundColor: const Color(0xFF1A1A1A),
-        title: Text('Pay ₹${payment['amount']}', style: GoogleFonts.poppins(color: _gold)),
-        content: Text('Simulated payment (Razorpay/Stripe). Confirm to mark as paid.', style: GoogleFonts.poppins(color: Colors.grey.shade300)),
+        backgroundColor: AppTheme.surfaceVariant,
+        title: Text('Pay ₹${payment['amount']}', style: GoogleFonts.poppins(color: AppTheme.primary)),
+        content: Text('Simulated payment (Razorpay/Stripe). Confirm to mark as paid.', style: GoogleFonts.poppins(color: AppTheme.onSurface)),
         actions: [
           TextButton(onPressed: () => Navigator.pop(ctx), child: const Text('Cancel')),
           FilledButton(
@@ -172,16 +182,14 @@ class _MemberHomeScreenState extends State<MemberHomeScreen> {
               final pid = payment['id'] as String?;
               if (mid == null || pid == null) return;
               try {
-                final r = await http.post(
-                  Uri.parse('$_apiBase/payments/pay?member_id=$mid&payment_id=$pid'),
-                ).timeout(const Duration(seconds: 10));
+                final r = await ApiClient.instance.post('/payments/pay?member_id=$mid&payment_id=$pid');
                 if (mounted && r.statusCode >= 200 && r.statusCode < 300) {
                   ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text('Payment recorded successfully!')));
                   _loadPayments();
                 }
               } catch (_) {}
             },
-            style: FilledButton.styleFrom(backgroundColor: _gold, foregroundColor: _deepBlack),
+            style: FilledButton.styleFrom(backgroundColor: AppTheme.primary, foregroundColor: AppTheme.onPrimary),
             child: const Text('Confirm'),
           ),
         ],
