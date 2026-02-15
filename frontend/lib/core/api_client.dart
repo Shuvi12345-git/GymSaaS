@@ -7,20 +7,43 @@ import 'package:http/http.dart' as http;
 ///
 /// For shared APK (friends testing): build with
 ///   flutter build apk --release --dart-define=API_BASE_URL=https://your-backend.com
-/// so the app uses your deployed backend instead of localhost.
+/// Or set the URL at runtime in the app (Home → Set server URL).
 class ApiClient {
   ApiClient._();
 
   static final ApiClient instance = ApiClient._();
 
   static const String _defaultBaseUrl = 'http://localhost:8000';
+  static const String _prefsKey = 'api_base_url';
+
+  /// Runtime override (e.g. from SharedPreferences). Set via [loadSavedBaseUrl] or user "Set server URL".
+  static String? _overrideBaseUrl;
+
   static String get baseUrl {
+    final override = _overrideBaseUrl?.trim();
+    if (override != null && override.isNotEmpty) {
+      return override.endsWith('/') ? override.substring(0, override.length - 1) : override;
+    }
     const fromEnv = String.fromEnvironment(
       'API_BASE_URL',
       defaultValue: _defaultBaseUrl,
     );
     return fromEnv.isEmpty ? _defaultBaseUrl : fromEnv;
   }
+
+  static set overrideBaseUrl(String? value) {
+    _overrideBaseUrl = value;
+  }
+
+  /// Call at startup to apply URL saved in SharedPreferences.
+  static Future<void> loadSavedBaseUrl(Future<String?> Function() read) async {
+    final saved = await read();
+    if (saved != null && saved.trim().isNotEmpty) {
+      _overrideBaseUrl = saved.trim();
+    }
+  }
+
+  static String get prefsKey => _prefsKey;
   static const Duration connectTimeout = Duration(seconds: 8);
   static const Duration receiveTimeout = Duration(seconds: 10);
   static const Duration cacheTtl = Duration(seconds: 45);

@@ -420,7 +420,7 @@ class _DashboardScreenState extends State<DashboardScreen> {
     if (widget.isEmbedded) return content;
     return Scaffold(
       appBar: AppBar(
-        title: const Text('Members Dashboard'),
+        title: const Text('Members', overflow: TextOverflow.ellipsis),
         actions: [
           IconButton(
             icon: const Icon(Icons.calendar_today),
@@ -522,16 +522,18 @@ class _DashboardScreenState extends State<DashboardScreen> {
                               ),
                             ),
                             child: Padding(
-                              padding: const EdgeInsets.symmetric(horizontal: 20, vertical: 12),
+                              padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 12),
                               child: Column(
                                 crossAxisAlignment: CrossAxisAlignment.start,
                                 children: [
                                   Row(
+                                    crossAxisAlignment: CrossAxisAlignment.start,
                                     children: [
                                       CircleAvatar(
                                         backgroundColor: _gold,
                                         foregroundColor: _deepBlack,
-                                        child: Text((m.name.isNotEmpty ? m.name[0] : '?').toUpperCase(), style: const TextStyle(fontWeight: FontWeight.bold)),
+                                        radius: 22,
+                                        child: Text((m.name.isNotEmpty ? m.name[0] : '?').toUpperCase(), style: const TextStyle(fontWeight: FontWeight.bold, fontSize: 16)),
                                       ),
                                       const SizedBox(width: 12),
                                       Expanded(
@@ -541,58 +543,80 @@ class _DashboardScreenState extends State<DashboardScreen> {
                                             Row(
                                               children: [
                                                 Container(
-                                                  width: 10,
-                                                  height: 10,
+                                                  width: 8,
+                                                  height: 8,
                                                   decoration: BoxDecoration(
                                                     color: isActive ? _activeGreen : _inactiveGrey,
                                                     shape: BoxShape.circle,
                                                   ),
                                                 ),
-                                                const SizedBox(width: 8),
-                                                Text(
-                                                  m.name,
-                                                  style: const TextStyle(color: Colors.white, fontWeight: FontWeight.w600),
+                                                const SizedBox(width: 6),
+                                                Expanded(
+                                                  child: Text(
+                                                    m.name,
+                                                    style: const TextStyle(color: Colors.white, fontWeight: FontWeight.w600, fontSize: 15),
+                                                    overflow: TextOverflow.ellipsis,
+                                                    maxLines: 1,
+                                                  ),
                                                 ),
                                               ],
                                             ),
                                             const SizedBox(height: 4),
-                                            Text(m.email, style: TextStyle(color: Colors.grey.shade400, fontSize: 13)),
-                                            Text(m.phone, style: TextStyle(color: Colors.grey.shade400, fontSize: 13)),
-                                            const SizedBox(height: 6),
-                                            Row(
+                                            Text(
+                                              m.email,
+                                              style: TextStyle(color: Colors.grey.shade400, fontSize: 12),
+                                              overflow: TextOverflow.ellipsis,
+                                              maxLines: 1,
+                                            ),
+                                            Text(
+                                              m.phone,
+                                              style: TextStyle(color: Colors.grey.shade400, fontSize: 12),
+                                              overflow: TextOverflow.ellipsis,
+                                              maxLines: 1,
+                                            ),
+                                            const SizedBox(height: 8),
+                                            Wrap(
+                                              spacing: 6,
+                                              runSpacing: 4,
                                               children: [
                                                 _chip(m.membershipType, _gold),
-                                                const SizedBox(width: 8),
                                                 _chip(m.batch, Colors.grey.shade700),
-                                                const SizedBox(width: 8),
                                                 _chip(m.status, isActive ? _activeGreen : _inactiveGrey),
                                               ],
                                             ),
                                           ],
                                         ),
                                       ),
-                                      const SizedBox(width: 8),
+                                    ],
+                                  ),
+                                  const SizedBox(height: 10),
+                                  Row(
+                                    mainAxisAlignment: MainAxisAlignment.end,
+                                    children: [
                                       TextButton(
                                         onPressed: () => _showMemberEditDialog(context, m),
+                                        style: TextButton.styleFrom(minimumSize: Size.zero, padding: const EdgeInsets.symmetric(horizontal: 12)),
                                         child: const Text('Edit'),
                                       ),
                                       if (m.membershipType.toLowerCase() == 'pt')
                                         TextButton(
                                           onPressed: () => _showPTEditSheet(context, m),
-                                          child: const Text('PT plan'),
+                                          style: TextButton.styleFrom(minimumSize: Size.zero, padding: const EdgeInsets.symmetric(horizontal: 8)),
+                                          child: const Text('PT'),
                                         ),
+                                      const SizedBox(width: 8),
                                       FilledButton(
                                         onPressed: isCheckingIn ? null : () => _checkIn(m),
                                         style: FilledButton.styleFrom(
                                           backgroundColor: _gold,
                                           foregroundColor: _deepBlack,
-                                          padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 12),
+                                          padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 10),
                                           minimumSize: Size.zero,
                                         ),
                                         child: isCheckingIn
                                             ? const SizedBox(
-                                                width: 20,
-                                                height: 20,
+                                                width: 18,
+                                                height: 18,
                                                 child: CircularProgressIndicator(strokeWidth: 2, color: _deepBlack),
                                               )
                                             : const Text('Check-In'),

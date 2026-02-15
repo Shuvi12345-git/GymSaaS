@@ -57,13 +57,21 @@ class _AdminDashboardScreenState extends State<AdminDashboardScreen> {
     return Scaffold(
       appBar: AppBar(
         title: Row(
+          mainAxisSize: MainAxisSize.min,
           children: [
-            Image.asset('assets/logo.png', height: 36, width: 36, fit: BoxFit.contain, errorBuilder: (_, __, ___) => Container(
-              width: 36, height: 36, decoration: BoxDecoration(color: AppTheme.primary.withOpacity(0.2), borderRadius: BorderRadius.circular(8)),
-              child: const Icon(Icons.fitness_center, color: AppTheme.primary, size: 22),
+            Image.asset('assets/logo.png', height: 32, width: 32, fit: BoxFit.contain, errorBuilder: (_, __, ___) => Container(
+              width: 32, height: 32, decoration: BoxDecoration(color: AppTheme.primary.withOpacity(0.2), borderRadius: BorderRadius.circular(8)),
+              child: const Icon(Icons.fitness_center, color: AppTheme.primary, size: 20),
             )),
-            const SizedBox(width: 12),
-            Text('Jupiter Arena Admin', style: GoogleFonts.poppins(fontWeight: FontWeight.w600)),
+            const SizedBox(width: 8),
+            Flexible(
+              child: Text(
+                'Jupiter Arena Admin',
+                style: GoogleFonts.poppins(fontWeight: FontWeight.w600, fontSize: 18),
+                overflow: TextOverflow.ellipsis,
+                maxLines: 1,
+              ),
+            ),
           ],
         ),
         actions: [

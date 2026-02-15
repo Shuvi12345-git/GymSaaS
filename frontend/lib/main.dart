@@ -2,10 +2,12 @@ import 'dart:convert';
 
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
+import 'package:shared_preferences/shared_preferences.dart';
 
 import 'core/api_client.dart';
 import 'theme/app_theme.dart';
 import 'screens/admin_dashboard_screen.dart';
+import 'screens/admin_login_screen.dart';
 import 'screens/attendance_report_screen.dart';
 import 'screens/dashboard_screen.dart';
 import 'screens/member_login_screen.dart';
@@ -45,9 +47,56 @@ class _MyHomePageState extends State<MyHomePage> {
   @override
   void initState() {
     super.initState();
+    ApiClient.loadSavedBaseUrl(() async =>
+        (await SharedPreferences.getInstance()).getString(ApiClient.prefsKey))
+        .then((_) {
+      if (mounted) setState(() {});
+    });
     WidgetsBinding.instance.addPostFrameCallback((_) {
       precacheImage(const AssetImage('assets/logo.png'), context);
     });
+  }
+
+  Future<void> _showSetServerUrlDialog() async {
+    final controller = TextEditingController(text: ApiClient.baseUrl);
+    if (!mounted) return;
+    final updated = await showDialog<bool>(
+      context: context,
+      builder: (ctx) => AlertDialog(
+        title: const Text('Set server URL'),
+        content: TextField(
+          controller: controller,
+          decoration: const InputDecoration(
+            hintText: 'https://your-backend.up.railway.app',
+            border: OutlineInputBorder(),
+          ),
+          autocorrect: false,
+          keyboardType: TextInputType.url,
+          onSubmitted: (_) => Navigator.of(ctx).pop(true),
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.of(ctx).pop(false),
+            child: const Text('Cancel'),
+          ),
+          FilledButton(
+            onPressed: () => Navigator.of(ctx).pop(true),
+            child: const Text('Save'),
+          ),
+        ],
+      ),
+    );
+    if (updated != true || !mounted) return;
+    final url = controller.text.trim();
+    if (url.isEmpty) return;
+    final prefs = await SharedPreferences.getInstance();
+    await prefs.setString(ApiClient.prefsKey, url);
+    ApiClient.overrideBaseUrl = url;
+    setState(() {});
+    if (!mounted) return;
+    ScaffoldMessenger.of(context).showSnackBar(
+      SnackBar(content: Text('Server URL set to $url')),
+    );
   }
 
   Future<void> _pingServer() async {
@@ -107,9 +156,32 @@ class _MyHomePageState extends State<MyHomePage> {
       body: Padding(
         padding: const EdgeInsets.symmetric(horizontal: 24),
         child: Center(
-          child: Column(
-            mainAxisAlignment: MainAxisAlignment.center,
-            children: [
+          child: SingleChildScrollView(
+            child: Column(
+              mainAxisAlignment: MainAxisAlignment.center,
+              children: [
+            Padding(
+              padding: const EdgeInsets.only(bottom: 16),
+              child: Row(
+                mainAxisAlignment: MainAxisAlignment.center,
+                children: [
+                  Flexible(
+                    child: Text(
+                      ApiClient.baseUrl,
+                      style: Theme.of(context).textTheme.bodySmall?.copyWith(
+                        color: Theme.of(context).colorScheme.onSurfaceVariant,
+                      ),
+                      overflow: TextOverflow.ellipsis,
+                      textAlign: TextAlign.center,
+                    ),
+                  ),
+                  TextButton(
+                    onPressed: _showSetServerUrlDialog,
+                    child: const Text('Set server URL'),
+                  ),
+                ],
+              ),
+            ),
             ElevatedButton.icon(
               onPressed: _isPinging ? null : _pingServer,
               icon: _isPinging
@@ -127,18 +199,42 @@ class _MyHomePageState extends State<MyHomePage> {
             const SizedBox(height: 20),
             FilledButton.icon(
               onPressed: () => Navigator.of(context).push(
-                MaterialPageRoute(builder: (_) => const RegistrationScreen()),
+                MaterialPageRoute(builder: (_) => const DashboardScreen(isEmbedded: false)),
               ),
-              icon: const Icon(Icons.person_add, size: 22),
-              label: const Text('Register Member'),
+              icon: const Icon(Icons.how_to_reg, size: 22),
+              label: const Text('Check-In'),
+              style: FilledButton.styleFrom(
+                backgroundColor: Theme.of(context).colorScheme.primary,
+                foregroundColor: Theme.of(context).colorScheme.onPrimary,
+                padding: const EdgeInsets.symmetric(horizontal: 32, vertical: 16),
+                shape: RoundedRectangleBorder(
+                  borderRadius: BorderRadius.circular(12),
+                ),
+              ),
             ),
             const SizedBox(height: 20),
             OutlinedButton.icon(
               onPressed: () => Navigator.of(context).push(
-                MaterialPageRoute(builder: (_) => const AdminDashboardScreen()),
+                MaterialPageRoute(builder: (_) => const RegistrationScreen()),
               ),
-              icon: const Icon(Icons.dashboard, size: 22),
-              label: const Text('Admin Dashboard'),
+              icon: const Icon(Icons.person_add, size: 22),
+              label: const Text('Register Member'),
+              style: OutlinedButton.styleFrom(
+                foregroundColor: Theme.of(context).colorScheme.primary,
+                side: BorderSide(color: Theme.of(context).colorScheme.primary),
+                padding: const EdgeInsets.symmetric(horizontal: 32, vertical: 16),
+                shape: RoundedRectangleBorder(
+                  borderRadius: BorderRadius.circular(12),
+                ),
+              ),
+            ),
+            const SizedBox(height: 20),
+            OutlinedButton.icon(
+              onPressed: () => Navigator.of(context).push(
+                MaterialPageRoute(builder: (_) => const AdminLoginScreen()),
+              ),
+              icon: const Icon(Icons.admin_panel_settings, size: 22),
+              label: const Text('Admin Login'),
               style: OutlinedButton.styleFrom(
                 foregroundColor: Theme.of(context).colorScheme.primary,
                 side: BorderSide(color: Theme.of(context).colorScheme.primary),
@@ -181,7 +277,8 @@ class _MyHomePageState extends State<MyHomePage> {
               ),
             ),
           ],
-        ),
+            ),
+          ),
         ),
       ),
     );

@@ -23,11 +23,42 @@ class MemberHomeScreen extends StatefulWidget {
 class _MemberHomeScreenState extends State<MemberHomeScreen> {
   List<dynamic> _payments = [];
   bool _loadingPayments = false;
+  bool _checkingIn = false;
+  bool _checkedInToday = false;
 
   @override
   void initState() {
     super.initState();
     _loadPayments();
+  }
+
+  Future<void> _checkInSelf() async {
+    final mid = widget.member['id'] as String?;
+    if (mid == null || _checkingIn) return;
+    setState(() => _checkingIn = true);
+    try {
+      final r = await ApiClient.instance.post('/attendance/check-in/$mid');
+      if (!mounted) return;
+      if (r.statusCode >= 200 && r.statusCode < 300) {
+        setState(() { _checkedInToday = true; _checkingIn = false; });
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(content: Text('Checked in successfully!')),
+        );
+      } else {
+        final body = jsonDecode(r.body) as Map<String, dynamic>?;
+        final detail = body?['detail']?.toString() ?? 'Check-in failed';
+        setState(() => _checkingIn = false);
+        if (detail.toLowerCase().contains('already') || detail.toLowerCase().contains('today')) {
+          setState(() => _checkedInToday = true);
+        }
+        ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text(detail)));
+      }
+    } catch (e) {
+      if (mounted) {
+        setState(() => _checkingIn = false);
+        ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text('Error: ${e.toString().split('\n').first}')));
+      }
+    }
   }
 
   Future<void> _loadPayments() async {
@@ -89,6 +120,19 @@ class _MemberHomeScreenState extends State<MemberHomeScreen> {
                       if (lastAttendance.isNotEmpty) Text('Last check-in: $lastAttendance', style: GoogleFonts.poppins(color: Colors.grey.shade600, fontSize: 13)),
                     ],
                   ),
+                ),
+              ),
+              const SizedBox(height: 16),
+              FilledButton.icon(
+                onPressed: (_checkedInToday || _checkingIn) ? null : _checkInSelf,
+                icon: _checkingIn
+                    ? const SizedBox(width: 20, height: 20, child: CircularProgressIndicator(strokeWidth: 2, color: AppTheme.onPrimary))
+                    : Icon(_checkedInToday ? Icons.check_circle : Icons.how_to_reg, size: 22),
+                label: Text(_checkedInToday ? 'Checked in today' : (_checkingIn ? 'Checking in...' : 'Check-in today')),
+                style: FilledButton.styleFrom(
+                  backgroundColor: AppTheme.primary,
+                  foregroundColor: AppTheme.onPrimary,
+                  padding: const EdgeInsets.symmetric(vertical: 16),
                 ),
               ),
               const SizedBox(height: 24),

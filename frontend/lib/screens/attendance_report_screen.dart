@@ -186,11 +186,14 @@ class _AttendanceReportScreenState extends State<AttendanceReportScreen> {
                 children: [
                   Icon(FontAwesomeIcons.calendarDays, color: AppTheme.primary, size: 20),
                   const SizedBox(width: 12),
-                  Text(
-                    DateFormat('EEEE, d MMM yyyy').format(_selectedDate),
-                    style: TextStyle(fontSize: 16, fontWeight: FontWeight.w600, color: AppTheme.onSurface),
+                  Expanded(
+                    child: Text(
+                      DateFormat('EEEE, d MMM yyyy').format(_selectedDate),
+                      style: TextStyle(fontSize: 16, fontWeight: FontWeight.w600, color: AppTheme.onSurface),
+                      overflow: TextOverflow.ellipsis,
+                      maxLines: 1,
+                    ),
                   ),
-                  const Spacer(),
                   TextButton.icon(
                     onPressed: _loading ? null : _pickDate,
                     icon: const Icon(Icons.edit_calendar, size: 18),
