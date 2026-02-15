@@ -74,6 +74,7 @@ class _MyHomePageState extends State<MyHomePage> {
       );
     } catch (e) {
       if (!mounted) return;
+      final url = ApiClient.baseUrl;
       ScaffoldMessenger.of(context).showSnackBar(
         SnackBar(
           content: Row(
@@ -81,10 +82,11 @@ class _MyHomePageState extends State<MyHomePage> {
               const Icon(Icons.error_outline, color: Color(0xFF0D0D0D), size: 22),
               const SizedBox(width: 12),
               Expanded(
-                child: Text('Server unreachable: ${e.toString().split('\n').first}'),
+                child: Text('Server unreachable. URL: $url — ${e.toString().split('\n').first}'),
               ),
             ],
           ),
+          duration: const Duration(seconds: 5),
         ),
       );
     } finally {
