@@ -1,13 +1,16 @@
 import 'dart:convert';
+import 'dart:io';
 
+import 'package:flutter/foundation.dart';
 import 'package:http/http.dart' as http;
 
 /// Enterprise-grade API client: connection reuse, timeouts, optional GET cache.
 /// Use [ApiClient.instance] everywhere instead of raw [http.get] for faster loads.
 ///
-/// For shared APK (friends testing): build with
-///   flutter build apk --release --dart-define=API_BASE_URL=https://your-backend.com
-/// Or set the URL at runtime in the app (Home → Set server URL).
+/// When device DNS fails (e.g. "Failed host lookup" on Android), falls back to
+/// resolving the API host via DNS-over-HTTPS (Google) and connecting by IP.
+///
+/// For shared APK: build with --dart-define=API_BASE_URL=https://... or set URL in app.
 class ApiClient {
   ApiClient._();
 
@@ -18,6 +21,9 @@ class ApiClient {
 
   /// Runtime override (e.g. from SharedPreferences). Set via [loadSavedBaseUrl] or user "Set server URL".
   static String? _overrideBaseUrl;
+
+  /// When host lookup fails, we resolve via DoH and cache host -> IP. Cleared when baseUrl changes.
+  static final Map<String, String> _hostToIp = {};
 
   static String get baseUrl {
     final override = _overrideBaseUrl?.trim();
@@ -33,6 +39,7 @@ class ApiClient {
 
   static set overrideBaseUrl(String? value) {
     _overrideBaseUrl = value;
+    _hostToIp.clear();
   }
 
   /// Call at startup to apply URL saved in SharedPreferences.
@@ -48,6 +55,8 @@ class ApiClient {
   static const Duration receiveTimeout = Duration(seconds: 10);
   static const Duration cacheTtl = Duration(seconds: 45);
 
+  static const _dohUrl = 'https://dns.google/resolve';
+
   http.Client? _client;
   final Map<String, _CacheEntry> _getCache = {};
 
@@ -56,7 +65,117 @@ class ApiClient {
     return _client!;
   }
 
-  /// GET with optional cache. Use [useCache: true] for list/dashboard endpoints.
+  Uri get _baseUri => Uri.parse(baseUrl);
+  String get _host => _baseUri.host;
+  bool get _isHttps => _baseUri.scheme == 'https';
+
+  bool _isLookupError(Object e) {
+    final s = e.toString().toLowerCase();
+    return s.contains('host lookup') ||
+        s.contains('no address associated') ||
+        s.contains('errno = 7') ||
+        (e is SocketException && (e.osError?.errorCode == 7 || e.message.contains('lookup')));
+  }
+
+  /// Resolve host to IP via Google DNS-over-HTTPS. Returns null if DoH fails (e.g. no network).
+  Future<String?> _resolveViaDoH(String host) async {
+    try {
+      final uri = Uri.parse('$_dohUrl?name=${Uri.encodeComponent(host)}&type=A');
+      final c = http.Client();
+      try {
+        final r = await c.get(uri).timeout(const Duration(seconds: 10));
+        c.close();
+        if (r.statusCode != 200) return null;
+        final map = jsonDecode(r.body) as Map<String, dynamic>?;
+        final answer = map?['Answer'] as List<dynamic>?;
+        if (answer == null || answer.isEmpty) return null;
+        final data = (answer.first as Map<String, dynamic>)['data'] as String?;
+        return data?.trim();
+      } catch (_) {
+        c.close();
+        return null;
+      }
+    } catch (_) {
+      return null;
+    }
+  }
+
+  Future<String?> _resolveHost() async {
+    final host = _host;
+    if (host.isEmpty) return null;
+    if (_hostToIp.containsKey(host)) return _hostToIp[host];
+    final ip = await _resolveViaDoH(host);
+    if (ip != null) _hostToIp[host] = ip;
+    return ip;
+  }
+
+  /// Perform one request via resolved IP (HTTPS only), with Host header and cert check for intended hostname.
+  Future<http.Response> _requestViaIp({
+    required String method,
+    required String path,
+    Map<String, String>? queryParameters,
+    Map<String, String>? headers,
+    Object? body,
+    Encoding? encoding,
+  }) async {
+    final host = _host;
+    final ip = await _resolveHost();
+    if (ip == null || ip.isEmpty) throw SocketException('Could not resolve host via DoH', osError: OSError('No address', 7));
+
+    final pathWithQuery = queryParameters != null && queryParameters.isNotEmpty
+        ? path + '?' + queryParameters.entries.map((e) => '${Uri.encodeComponent(e.key)}=${Uri.encodeComponent(e.value)}').join('&')
+        : path;
+    final uri = Uri.parse('https://$ip$pathWithQuery');
+
+    final client = HttpClient()
+      ..connectionTimeout = connectTimeout
+      ..idleTimeout = receiveTimeout;
+    try {
+      client.badCertificateCallback = (X509Certificate cert, String host, int port) {
+        final sub = cert.subject.toLowerCase();
+        return sub.contains(host.toLowerCase()) ||
+            host.toLowerCase().contains('.railway.app') ||
+            sub.contains('railway');
+      };
+
+      HttpClientRequest req;
+      switch (method.toUpperCase()) {
+        case 'GET':
+          req = await client.getUrl(uri);
+          break;
+        case 'POST':
+          req = await client.postUrl(uri);
+          break;
+        case 'PATCH':
+          req = await client.patchUrl(uri);
+          break;
+        case 'DELETE':
+          req = await client.deleteUrl(uri);
+          break;
+        default:
+          req = await client.getUrl(uri);
+      }
+
+      req.headers.set('Host', host);
+      if (headers != null) {
+        for (final e in headers.entries) {
+          req.headers.set(e.key, e.value);
+        }
+      }
+      if (body != null && (method == 'POST' || method == 'PATCH')) {
+        final bytes = encoding == null ? utf8.encode(body.toString()) : encoding.encode(body.toString());
+        req.contentLength = bytes.length;
+        req.add(bytes);
+      }
+
+      final response = await req.close();
+      final bodyBytes = await consolidateHttpClientResponseBytes(response);
+      return http.Response.bytes(bodyBytes, response.statusCode);
+    } finally {
+      client.close();
+    }
+  }
+
   Future<http.Response> get(
     String path, {
     Map<String, String>? queryParameters,
@@ -74,65 +193,102 @@ class ApiClient {
       }
     }
 
-    final response = await _clientOrCreate
-        .get(uri)
-        .timeout(receiveTimeout);
+    try {
+      final response = await _clientOrCreate
+          .get(uri)
+          .timeout(receiveTimeout);
 
-    if (useCache && response.statusCode >= 200 && response.statusCode < 300) {
-      _getCache[key] = _CacheEntry(
-        body: response.body,
-        statusCode: response.statusCode,
-        cachedAt: DateTime.now(),
-      );
+      if (useCache && response.statusCode >= 200 && response.statusCode < 300) {
+        _getCache[key] = _CacheEntry(
+          body: response.body,
+          statusCode: response.statusCode,
+          cachedAt: DateTime.now(),
+        );
+      }
+      return response;
+    } catch (e) {
+      if (_isHttps && _isLookupError(e)) {
+        final fallback = await _requestViaIp(method: 'GET', path: path, queryParameters: queryParameters);
+        if (useCache && fallback.statusCode >= 200 && fallback.statusCode < 300) {
+          _getCache[key] = _CacheEntry(
+            body: fallback.body,
+            statusCode: fallback.statusCode,
+            cachedAt: DateTime.now(),
+          );
+        }
+        return fallback;
+      }
+      rethrow;
     }
-    return response;
   }
 
-  /// POST; clears GET cache so next list/dashboard load is fresh.
   Future<http.Response> post(
     String path, {
     Map<String, String>? headers,
     Object? body,
     Encoding? encoding,
   }) async {
-    final response = await _clientOrCreate
-        .post(Uri.parse(baseUrl + path), headers: headers, body: body, encoding: encoding)
-        .timeout(receiveTimeout);
-    _clearCache();
-    return response;
+    try {
+      final response = await _clientOrCreate
+          .post(Uri.parse(baseUrl + path), headers: headers, body: body, encoding: encoding)
+          .timeout(receiveTimeout);
+      _clearCache();
+      return response;
+    } catch (e) {
+      if (_isHttps && _isLookupError(e)) {
+        final r = await _requestViaIp(method: 'POST', path: path, headers: headers, body: body, encoding: encoding);
+        _clearCache();
+        return r;
+      }
+      rethrow;
+    }
   }
 
-  /// PATCH; clears GET cache.
   Future<http.Response> patch(
     String path, {
     Map<String, String>? headers,
     Object? body,
     Encoding? encoding,
   }) async {
-    final response = await _clientOrCreate
-        .patch(Uri.parse(baseUrl + path), headers: headers, body: body, encoding: encoding)
-        .timeout(receiveTimeout);
-    _clearCache();
-    return response;
+    try {
+      final response = await _clientOrCreate
+          .patch(Uri.parse(baseUrl + path), headers: headers, body: body, encoding: encoding)
+          .timeout(receiveTimeout);
+      _clearCache();
+      return response;
+    } catch (e) {
+      if (_isHttps && _isLookupError(e)) {
+        final r = await _requestViaIp(method: 'PATCH', path: path, headers: headers, body: body, encoding: encoding);
+        _clearCache();
+        return r;
+      }
+      rethrow;
+    }
   }
 
-  /// DELETE; clears GET cache.
   Future<http.Response> delete(String path) async {
-    final response = await _clientOrCreate
-        .delete(Uri.parse(baseUrl + path))
-        .timeout(receiveTimeout);
-    _clearCache();
-    return response;
+    try {
+      final response = await _clientOrCreate
+          .delete(Uri.parse(baseUrl + path))
+          .timeout(receiveTimeout);
+      _clearCache();
+      return response;
+    } catch (e) {
+      if (_isHttps && _isLookupError(e)) {
+        final r = await _requestViaIp(method: 'DELETE', path: path);
+        _clearCache();
+        return r;
+      }
+      rethrow;
+    }
   }
 
   void _clearCache() {
     if (_getCache.isNotEmpty) _getCache.clear();
   }
 
-  /// Call when user explicitly refreshes (e.g. pull-to-refresh) to force fresh data.
   void invalidateCache() => _clearCache();
 
-  /// Release the HTTP client (e.g. on app dispose).
   void close() {
     _client?.close();
     _client = null;
