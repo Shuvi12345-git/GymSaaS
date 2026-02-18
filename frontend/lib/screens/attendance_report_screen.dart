@@ -16,6 +16,9 @@ import '../core/api_client.dart';
 import '../core/date_utils.dart';
 import '../theme/app_theme.dart';
 
+/// Breakpoint below which layout stacks vertically (e.g. title + button).
+const double _attendanceNarrowBreakpoint = 480;
+
 final _apiBase = ApiClient.baseUrl;
 
 class AttendanceEntry {
@@ -339,26 +342,48 @@ class _AttendanceReportScreenState extends State<AttendanceReportScreen> {
           child: Column(
             crossAxisAlignment: CrossAxisAlignment.stretch,
             children: [
-              // Dashboard: title, subtitle, Manual Check-in, 4 cards
-              Row(
-                children: [
-                  Expanded(
-                    child: Column(
-                      crossAxisAlignment: CrossAxisAlignment.start,
+              // Dashboard: title, subtitle, Manual Check-in – stack on narrow
+              LayoutBuilder(
+                builder: (context, constraints) {
+                  final narrow = constraints.maxWidth < _attendanceNarrowBreakpoint;
+                  if (narrow) {
+                    return Column(
+                      crossAxisAlignment: CrossAxisAlignment.stretch,
                       children: [
                         Text('Attendance', style: GoogleFonts.poppins(fontSize: 22, fontWeight: FontWeight.bold, color: AppTheme.onSurface)),
                         const SizedBox(height: 4),
                         Text('Track member check-ins and gym visits.', style: GoogleFonts.poppins(fontSize: 14, color: Colors.grey.shade600)),
+                        const SizedBox(height: 12),
+                        FilledButton.icon(
+                          onPressed: _showManualCheckIn,
+                          icon: const Icon(Icons.person_add_alt_1, size: 20),
+                          label: const Text('Manual Check-in'),
+                          style: FilledButton.styleFrom(backgroundColor: Colors.blue, padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 12)),
+                        ),
                       ],
-                    ),
-                  ),
-                  FilledButton.icon(
-                    onPressed: _showManualCheckIn,
-                    icon: const Icon(Icons.person_add_alt_1, size: 20),
-                    label: const Text('Manual Check-in'),
-                    style: FilledButton.styleFrom(backgroundColor: Colors.blue, padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 12)),
-                  ),
-                ],
+                    );
+                  }
+                  return Row(
+                    children: [
+                      Expanded(
+                        child: Column(
+                          crossAxisAlignment: CrossAxisAlignment.start,
+                          children: [
+                            Text('Attendance', style: GoogleFonts.poppins(fontSize: 22, fontWeight: FontWeight.bold, color: AppTheme.onSurface)),
+                            const SizedBox(height: 4),
+                            Text('Track member check-ins and gym visits.', style: GoogleFonts.poppins(fontSize: 14, color: Colors.grey.shade600)),
+                          ],
+                        ),
+                      ),
+                      FilledButton.icon(
+                        onPressed: _showManualCheckIn,
+                        icon: const Icon(Icons.person_add_alt_1, size: 20),
+                        label: const Text('Manual Check-in'),
+                        style: FilledButton.styleFrom(backgroundColor: Colors.blue, padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 12)),
+                      ),
+                    ],
+                  );
+                },
               ),
               const SizedBox(height: 20),
               Row(
@@ -437,32 +462,66 @@ class _AttendanceReportScreenState extends State<AttendanceReportScreen> {
                 ],
               ),
               const SizedBox(height: 16),
-              // Search and filter
-              Row(
-                children: [
-                  Expanded(
-                    child: TextField(
-                      controller: _searchController,
-                      decoration: InputDecoration(
-                        hintText: 'Search by name or phone...',
-                        prefixIcon: const Icon(Icons.search, size: 22),
-                        border: OutlineInputBorder(borderRadius: BorderRadius.circular(8)),
-                        isDense: true,
-                        contentPadding: const EdgeInsets.symmetric(horizontal: 12, vertical: 10),
+              // Search and filter – stack on narrow
+              LayoutBuilder(
+                builder: (context, constraints) {
+                  final narrow = constraints.maxWidth < _attendanceNarrowBreakpoint;
+                  if (narrow) {
+                    return Column(
+                      crossAxisAlignment: CrossAxisAlignment.stretch,
+                      children: [
+                        TextField(
+                          controller: _searchController,
+                          decoration: InputDecoration(
+                            hintText: 'Search by name or phone...',
+                            prefixIcon: const Icon(Icons.search, size: 22),
+                            border: OutlineInputBorder(borderRadius: BorderRadius.circular(8)),
+                            isDense: true,
+                            contentPadding: const EdgeInsets.symmetric(horizontal: 12, vertical: 10),
+                          ),
+                          onChanged: (_) => setState(() {}),
+                        ),
+                        const SizedBox(height: 8),
+                        DropdownButtonFormField<String>(
+                          value: _filterBatch,
+                          decoration: InputDecoration(
+                            border: OutlineInputBorder(borderRadius: BorderRadius.circular(8)),
+                            isDense: true,
+                            contentPadding: const EdgeInsets.symmetric(horizontal: 12, vertical: 10),
+                          ),
+                          items: ['All', 'Morning', 'Evening', 'Ladies'].map((s) => DropdownMenuItem(value: s, child: Text(s))).toList(),
+                          onChanged: (v) => setState(() => _filterBatch = v ?? 'All'),
+                        ),
+                      ],
+                    );
+                  }
+                  return Row(
+                    children: [
+                      Expanded(
+                        child: TextField(
+                          controller: _searchController,
+                          decoration: InputDecoration(
+                            hintText: 'Search by name or phone...',
+                            prefixIcon: const Icon(Icons.search, size: 22),
+                            border: OutlineInputBorder(borderRadius: BorderRadius.circular(8)),
+                            isDense: true,
+                            contentPadding: const EdgeInsets.symmetric(horizontal: 12, vertical: 10),
+                          ),
+                          onChanged: (_) => setState(() {}),
+                        ),
                       ),
-                      onChanged: (_) => setState(() {}),
-                    ),
-                  ),
-                  const SizedBox(width: 8),
-                  DropdownButton<String>(
-                    value: _filterBatch,
-                    items: ['All', 'Morning', 'Evening', 'Ladies'].map((s) => DropdownMenuItem(value: s, child: Text(s))).toList(),
-                    onChanged: (v) => setState(() => _filterBatch = v ?? 'All'),
-                  ),
-                ],
+                      const SizedBox(width: 8),
+                      DropdownButton<String>(
+                        value: _filterBatch,
+                        items: ['All', 'Morning', 'Evening', 'Ladies'].map((s) => DropdownMenuItem(value: s, child: Text(s))).toList(),
+                        onChanged: (v) => setState(() => _filterBatch = v ?? 'All'),
+                      ),
+                    ],
+                  );
+                },
               ),
               const SizedBox(height: 16),
-              // Table / Records
+              // Section title and header row for records
               Text('Attendance Records', style: GoogleFonts.poppins(fontSize: 16, fontWeight: FontWeight.w600)),
               const SizedBox(height: 8),
               if (_loading)
@@ -503,14 +562,15 @@ class _AttendanceReportScreenState extends State<AttendanceReportScreen> {
                       return SingleChildScrollView(
                         scrollDirection: Axis.horizontal,
                         child: DataTable(
+                          headingRowColor: MaterialStateProperty.all<Color?>(AppTheme.primary.withOpacity(0.08)),
                           columns: const [
-                            DataColumn(label: Text('Member')),
-                            DataColumn(label: Text('Phone')),
-                            DataColumn(label: Text('Check-in')),
-                            DataColumn(label: Text('Check-out')),
-                            DataColumn(label: Text('Duration')),
-                            DataColumn(label: Text('Method')),
-                            DataColumn(label: Text('Actions')),
+                            DataColumn(label: Text('Member', style: TextStyle(fontWeight: FontWeight.w600))),
+                            DataColumn(label: Text('Phone', style: TextStyle(fontWeight: FontWeight.w600))),
+                            DataColumn(label: Text('Check-in', style: TextStyle(fontWeight: FontWeight.w600))),
+                            DataColumn(label: Text('Check-out', style: TextStyle(fontWeight: FontWeight.w600))),
+                            DataColumn(label: Text('Duration', style: TextStyle(fontWeight: FontWeight.w600))),
+                            DataColumn(label: Text('Batch', style: TextStyle(fontWeight: FontWeight.w600))),
+                            DataColumn(label: Text('Actions', style: TextStyle(fontWeight: FontWeight.w600))),
                           ],
                           rows: list.map((e) => DataRow(
                             cells: [
@@ -519,7 +579,7 @@ class _AttendanceReportScreenState extends State<AttendanceReportScreen> {
                               DataCell(Text(formatDisplayTime(e.checkInAt))),
                               DataCell(Text(e.checkOutAt != null ? formatDisplayTime(e.checkOutAt!) : '—')),
                               DataCell(Text(e.durationMinutes)),
-                              const DataCell(Text('Manual')),
+                              DataCell(Text(e.batch)),
                               DataCell(IconButton(
                                 icon: const Icon(Icons.delete_outline, size: 20),
                                 onPressed: () => _deleteAttendance(e),
@@ -530,33 +590,98 @@ class _AttendanceReportScreenState extends State<AttendanceReportScreen> {
                         ),
                       );
                     }
-                    return ListView.separated(
-                      shrinkWrap: true,
-                      physics: const NeverScrollableScrollPhysics(),
-                      itemCount: list.length,
-                      separatorBuilder: (_, __) => const Divider(height: 1),
-                      itemBuilder: (context, i) {
-                        final e = list[i];
-                        return Padding(
-                          padding: const EdgeInsets.symmetric(vertical: 8),
+                    // Mobile: header row + Column of cards (no nested ListView to avoid viewport crash)
+                    return Column(
+                      crossAxisAlignment: CrossAxisAlignment.stretch,
+                      children: [
+                        Container(
+                          padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 10),
+                          decoration: BoxDecoration(
+                            color: AppTheme.primary.withOpacity(0.08),
+                            borderRadius: BorderRadius.circular(8),
+                            border: Border(bottom: BorderSide(color: AppTheme.primary.withOpacity(0.3))),
+                          ),
                           child: Row(
-                            crossAxisAlignment: CrossAxisAlignment.start,
                             children: [
-                              Expanded(flex: 2, child: Text(e.memberName, style: GoogleFonts.poppins(fontWeight: FontWeight.w500))),
-                              Expanded(child: Text(e.memberPhone ?? '—', style: GoogleFonts.poppins(fontSize: 12))),
-                              Text(formatDisplayTime(e.checkInAt), style: GoogleFonts.poppins(fontSize: 12)),
-                              const SizedBox(width: 8),
-                              Text(e.checkOutAt != null ? formatDisplayTime(e.checkOutAt!) : '—', style: GoogleFonts.poppins(fontSize: 12)),
-                              const SizedBox(width: 8),
-                              Text(e.durationMinutes, style: GoogleFonts.poppins(fontSize: 12)),
-                              IconButton(icon: const Icon(Icons.delete_outline, size: 20), onPressed: () => _deleteAttendance(e), color: Colors.red),
+                              Expanded(flex: 2, child: Text('Member', style: GoogleFonts.poppins(fontSize: 12, fontWeight: FontWeight.w600, color: AppTheme.onSurface), overflow: TextOverflow.ellipsis)),
+                              Expanded(child: Text('In', style: GoogleFonts.poppins(fontSize: 11, fontWeight: FontWeight.w600, color: AppTheme.onSurfaceVariant), overflow: TextOverflow.ellipsis)),
+                              Expanded(child: Text('Out', style: GoogleFonts.poppins(fontSize: 11, fontWeight: FontWeight.w600, color: AppTheme.onSurfaceVariant), overflow: TextOverflow.ellipsis)),
+                              Expanded(child: Text('Dur.', style: GoogleFonts.poppins(fontSize: 11, fontWeight: FontWeight.w600, color: AppTheme.onSurfaceVariant), overflow: TextOverflow.ellipsis)),
+                              const SizedBox(width: 40),
                             ],
                           ),
-                        );
-                      },
+                        ),
+                        const SizedBox(height: 6),
+                        ...List.generate(list.length * 2 - 1, (index) {
+                          if (index.isOdd) return const SizedBox(height: 8);
+                          final e = list[index ~/ 2];
+                          return _AttendanceRecordCard(
+                            entry: e,
+                            onDelete: () => _deleteAttendance(e),
+                          );
+                        }),
+                      ],
                     );
                   },
                 ),
+            ],
+          ),
+        ),
+      ),
+    );
+  }
+}
+
+/// Single attendance record card for mobile list (avoids nested ListView viewport crash).
+class _AttendanceRecordCard extends StatelessWidget {
+  final AttendanceEntry entry;
+  final VoidCallback onDelete;
+
+  const _AttendanceRecordCard({required this.entry, required this.onDelete});
+
+  @override
+  Widget build(BuildContext context) {
+    final e = entry;
+    return Card(
+      elevation: 0,
+      margin: EdgeInsets.zero,
+      color: AppTheme.surfaceVariant.withOpacity(0.6),
+      shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(8)),
+      child: InkWell(
+        borderRadius: BorderRadius.circular(8),
+        onTap: () {},
+        child: Padding(
+          padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 10),
+          child: Row(
+            crossAxisAlignment: CrossAxisAlignment.center,
+            children: [
+              Expanded(
+                flex: 2,
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  mainAxisSize: MainAxisSize.min,
+                  children: [
+                    Text(e.memberName, style: GoogleFonts.poppins(fontSize: 14, fontWeight: FontWeight.w500), overflow: TextOverflow.ellipsis),
+                    if (e.memberPhone != null && e.memberPhone!.isNotEmpty)
+                      Text(
+                        e.memberPhone!.length > 12 ? '${e.memberPhone!.substring(0, 12)}…' : e.memberPhone!,
+                        style: GoogleFonts.poppins(fontSize: 12, color: Colors.grey.shade600),
+                        overflow: TextOverflow.ellipsis,
+                      ),
+                    Text(e.batch, style: GoogleFonts.poppins(fontSize: 11, color: AppTheme.primary)),
+                  ],
+                ),
+              ),
+              Expanded(child: Text(formatDisplayTime(e.checkInAt), style: GoogleFonts.poppins(fontSize: 12), overflow: TextOverflow.ellipsis)),
+              Expanded(child: Text(e.checkOutAt != null ? formatDisplayTime(e.checkOutAt!) : '—', style: GoogleFonts.poppins(fontSize: 12), overflow: TextOverflow.ellipsis)),
+              Expanded(child: Text(e.durationMinutes, style: GoogleFonts.poppins(fontSize: 12), overflow: TextOverflow.ellipsis)),
+              IconButton(
+                icon: const Icon(Icons.delete_outline, size: 20),
+                onPressed: onDelete,
+                color: Colors.red,
+                padding: EdgeInsets.zero,
+                constraints: const BoxConstraints(minWidth: 36, minHeight: 36),
+              ),
             ],
           ),
         ),

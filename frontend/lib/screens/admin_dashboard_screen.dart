@@ -26,6 +26,9 @@ import 'dashboard_screen.dart';
 import 'member_detail_screen.dart';
 import 'registration_screen.dart';
 
+/// Breakpoint below which overview cards stack vertically (avoid overflow on phones).
+const double _overviewNarrowBreakpoint = 420;
+
 final _apiBase = ApiClient.baseUrl;
 const _padding = 20.0;
 
@@ -319,6 +322,8 @@ class _OverviewTabState extends State<_OverviewTab> {
     if (_loading) return const Center(child: CircularProgressIndicator(color: AppTheme.primary));
     if (_error != null) return Center(child: Text(_error!, style: const TextStyle(color: Colors.grey)));
     final d = _data!;
+    final padding = LayoutConstants.screenPadding(context);
+    final isNarrow = MediaQuery.sizeOf(context).width < 400;
     return RefreshIndicator(
       onRefresh: () {
         ApiClient.instance.invalidateCache();
@@ -326,7 +331,7 @@ class _OverviewTabState extends State<_OverviewTab> {
       },
       color: AppTheme.primary,
       child: SingleChildScrollView(
-        padding: const EdgeInsets.only(bottom: _padding),
+        padding: EdgeInsets.only(left: padding, right: padding, bottom: padding),
         child: Column(
           crossAxisAlignment: CrossAxisAlignment.stretch,
           children: [
@@ -352,38 +357,36 @@ class _OverviewTabState extends State<_OverviewTab> {
               ],
             ),
             const SizedBox(height: 16),
-            Row(
-              children: [
-                Expanded(
-                  child: _AnalyticsCard(
-                    title: 'Check-ins',
-                    value: '${d['today_check_ins'] ?? d['today_attendance_count'] ?? 0}',
-                    icon: FontAwesomeIcons.rightToBracket,
-                    color: AppTheme.success,
-                  ),
-                ),
-                const SizedBox(width: 12),
-                Expanded(
-                  child: _AnalyticsCard(
-                    title: 'Check-outs',
-                    value: '${d['today_check_outs'] ?? 0}',
-                    icon: FontAwesomeIcons.rightFromBracket,
-                    color: Colors.grey,
-                  ),
-                ),
-                const SizedBox(width: 12),
-                Expanded(
-                  child: _AnalyticsCard(
-                    title: 'Currently In',
-                    value: '${d['today_currently_in'] ?? 0}',
-                    icon: FontAwesomeIcons.peopleGroup,
-                    color: Colors.blue,
-                  ),
-                ),
-              ],
+            // Responsive: 3 cards in a row on wider screens, wrap on narrow
+            LayoutBuilder(
+              builder: (context, constraints) {
+                final w = constraints.maxWidth;
+                if (w < _overviewNarrowBreakpoint) {
+                  return Column(
+                    children: [
+                      _AnalyticsCard(title: 'Check-ins', value: '${d['today_check_ins'] ?? d['today_attendance_count'] ?? 0}', icon: FontAwesomeIcons.rightToBracket, color: AppTheme.success),
+                      const SizedBox(height: 12),
+                      _AnalyticsCard(title: 'Check-outs', value: '${d['today_check_outs'] ?? 0}', icon: FontAwesomeIcons.rightFromBracket, color: Colors.grey),
+                      const SizedBox(height: 12),
+                      _AnalyticsCard(title: 'Currently In', value: '${d['today_currently_in'] ?? 0}', icon: FontAwesomeIcons.peopleGroup, color: Colors.blue),
+                    ],
+                  );
+                }
+                return Row(
+                  children: [
+                    Expanded(child: _AnalyticsCard(title: 'Check-ins', value: '${d['today_check_ins'] ?? d['today_attendance_count'] ?? 0}', icon: FontAwesomeIcons.rightToBracket, color: AppTheme.success)),
+                    SizedBox(width: isNarrow ? 8 : 12),
+                    Expanded(child: _AnalyticsCard(title: 'Check-outs', value: '${d['today_check_outs'] ?? 0}', icon: FontAwesomeIcons.rightFromBracket, color: Colors.grey)),
+                    SizedBox(width: isNarrow ? 8 : 12),
+                    Expanded(child: _AnalyticsCard(title: 'Currently In', value: '${d['today_currently_in'] ?? 0}', icon: FontAwesomeIcons.peopleGroup, color: Colors.blue)),
+                  ],
+                );
+              },
             ),
             const SizedBox(height: 24),
-            Row(
+            Wrap(
+              spacing: 8,
+              runSpacing: 8,
               children: [
                 OutlinedButton.icon(
                   onPressed: _pickDateRange,
@@ -400,6 +403,7 @@ class _OverviewTabState extends State<_OverviewTab> {
                   ),
               ],
             ),
+            const SizedBox(height: 16),
             Row(
               children: [
                 Expanded(
@@ -410,7 +414,7 @@ class _OverviewTabState extends State<_OverviewTab> {
                     color: AppTheme.primary,
                   ),
                 ),
-                const SizedBox(width: 16),
+                SizedBox(width: isNarrow ? 8 : 16),
                 Expanded(
                   child: InkWell(
                     onTap: () => Navigator.push(context, MaterialPageRoute(builder: (_) => const AttendanceReportScreen())),
@@ -437,7 +441,7 @@ class _OverviewTabState extends State<_OverviewTab> {
                       color: AppTheme.primary,
                     ),
                   ),
-                  const SizedBox(width: 16),
+                  SizedBox(width: isNarrow ? 8 : 16),
                   Expanded(
                     child: _AnalyticsCard(
                       title: 'Payments received (₹)',
@@ -450,53 +454,19 @@ class _OverviewTabState extends State<_OverviewTab> {
               ),
               const SizedBox(height: 16),
             ],
-            _AnalyticsCard(
-              title: 'Active Members',
-              value: '${d['active_members'] ?? 0}',
-              icon: FontAwesomeIcons.userCheck,
-              color: AppTheme.success,
-            ),
+            _AnalyticsCard(title: 'Active Members', value: '${d['active_members'] ?? 0}', icon: FontAwesomeIcons.userCheck, color: AppTheme.success),
             const SizedBox(height: 16),
-            _AnalyticsCard(
-              title: 'Inactive Members',
-              value: '${d['inactive_members'] ?? 0}',
-              icon: FontAwesomeIcons.userXmark,
-              color: Colors.grey,
-            ),
+            _AnalyticsCard(title: 'Inactive Members', value: '${d['inactive_members'] ?? 0}', icon: FontAwesomeIcons.userXmark, color: Colors.grey),
             const SizedBox(height: 16),
-            _AnalyticsCard(
-              title: 'Total Collections (₹)',
-              value: '${d['total_collections'] ?? 0}',
-              icon: FontAwesomeIcons.indianRupeeSign,
-              color: AppTheme.primary,
-            ),
+            _AnalyticsCard(title: 'Total Collections (₹)', value: '${d['total_collections'] ?? 0}', icon: FontAwesomeIcons.indianRupeeSign, color: AppTheme.primary),
             const SizedBox(height: 16),
-            _AnalyticsCard(
-              title: 'Pending Dues (₹)',
-              value: '${d['pending_fees_amount'] ?? 0}',
-              icon: FontAwesomeIcons.clock,
-              color: Colors.orange,
-            ),
+            _AnalyticsCard(title: 'Pending Dues (₹)', value: '${d['pending_fees_amount'] ?? 0}', icon: FontAwesomeIcons.clock, color: Colors.orange),
             const SizedBox(height: 16),
             Row(
               children: [
-                Expanded(
-                  child: _AnalyticsCard(
-                    title: 'Regular',
-                    value: '${d['regular_count'] ?? 0}',
-                    icon: FontAwesomeIcons.users,
-                    color: AppTheme.primary,
-                  ),
-                ),
-                const SizedBox(width: 16),
-                Expanded(
-                  child: _AnalyticsCard(
-                    title: 'PT',
-                    value: '${d['pt_count'] ?? 0}',
-                    icon: FontAwesomeIcons.dumbbell,
-                    color: AppTheme.primary,
-                  ),
-                ),
+                Expanded(child: _AnalyticsCard(title: 'Regular', value: '${d['regular_count'] ?? 0}', icon: FontAwesomeIcons.users, color: AppTheme.primary)),
+                SizedBox(width: isNarrow ? 8 : 16),
+                Expanded(child: _AnalyticsCard(title: 'PT', value: '${d['pt_count'] ?? 0}', icon: FontAwesomeIcons.dumbbell, color: AppTheme.primary)),
               ],
             ),
             const SizedBox(height: 24),
@@ -523,32 +493,58 @@ class _AnalyticsCard extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    return Card(
-      color: AppTheme.surfaceVariant,
-      shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16), side: BorderSide(color: color.withOpacity(0.5))),
-      child: Padding(
-        padding: const EdgeInsets.all(_padding),
-        child: Row(
-          children: [
-            Container(
-              padding: const EdgeInsets.all(12),
-              decoration: BoxDecoration(color: color.withOpacity(0.2), borderRadius: BorderRadius.circular(12)),
-              child: FaIcon(icon, color: color, size: 28),
+    return LayoutBuilder(
+      builder: (context, constraints) {
+        final cardWidth = constraints.maxWidth;
+        // When card is in a 3-column row it gets ~1/3 screen; use compact layout to avoid overflow.
+        final veryTight = cardWidth > 0 && cardWidth < 160;
+        final tight = cardWidth > 0 && cardWidth < 200;
+        final pad = LayoutConstants.screenPadding(context);
+        final cardPad = veryTight ? 6.0 : (tight ? 8.0 : (cardWidth < 400 ? 12.0 : pad));
+        final iconPad = veryTight ? 4.0 : (tight ? 6.0 : 8.0);
+        final iconSize = veryTight ? 16.0 : (tight ? 20.0 : 28.0);
+        final titleSize = veryTight ? 9.0 : (tight ? 10.0 : 14.0);
+        final valueSize = veryTight ? 12.0 : (tight ? 16.0 : 24.0);
+        final gap = veryTight ? 4.0 : (tight ? 6.0 : 16.0);
+        return Card(
+          color: AppTheme.surfaceVariant,
+          shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16), side: BorderSide(color: color.withOpacity(0.5))),
+          child: Padding(
+            padding: EdgeInsets.all(cardPad),
+            child: Row(
+              children: [
+                Container(
+                  padding: EdgeInsets.all(iconPad),
+                  decoration: BoxDecoration(color: color.withOpacity(0.2), borderRadius: BorderRadius.circular(12)),
+                  child: FaIcon(icon, color: color, size: iconSize),
+                ),
+                SizedBox(width: gap),
+                Expanded(
+                  child: Column(
+                    mainAxisSize: MainAxisSize.min,
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      Text(
+                        title,
+                        style: GoogleFonts.poppins(color: Colors.grey.shade600, fontSize: titleSize),
+                        maxLines: 1,
+                        overflow: TextOverflow.ellipsis,
+                      ),
+                      const SizedBox(height: 2),
+                      Text(
+                        value,
+                        style: GoogleFonts.poppins(color: AppTheme.onSurface, fontSize: valueSize, fontWeight: FontWeight.bold),
+                        maxLines: 1,
+                        overflow: TextOverflow.ellipsis,
+                      ),
+                    ],
+                  ),
+                ),
+              ],
             ),
-            const SizedBox(width: 16),
-            Expanded(
-              child: Column(
-                crossAxisAlignment: CrossAxisAlignment.start,
-                children: [
-                  Text(title, style: GoogleFonts.poppins(color: Colors.grey.shade600, fontSize: 14)),
-                  const SizedBox(height: 4),
-                  Text(value, style: GoogleFonts.poppins(color: AppTheme.onSurface, fontSize: 24, fontWeight: FontWeight.bold)),
-                ],
-              ),
-            ),
-          ],
-        ),
-      ),
+          ),
+        );
+      },
     );
   }
 }
@@ -575,12 +571,14 @@ class _MembersTabState extends State<_MembersTab> {
 
   @override
   Widget build(BuildContext context) {
+    final isNarrow = MediaQuery.sizeOf(context).width < 360;
     return Column(
       children: [
-        Row(
-          children: [
-            Expanded(
-              child: TextField(
+        if (isNarrow)
+          Column(
+            crossAxisAlignment: CrossAxisAlignment.stretch,
+            children: [
+              TextField(
                 controller: _searchController,
                 decoration: InputDecoration(
                   hintText: 'Search by name…',
@@ -591,16 +589,40 @@ class _MembersTabState extends State<_MembersTab> {
                 ),
                 onChanged: (_) => setState(() {}),
               ),
-            ),
-            const SizedBox(width: 8),
-            FilledButton.icon(
-              onPressed: widget.onRegisterPressed,
-              icon: const Icon(FontAwesomeIcons.userPlus, size: 18),
-              label: const Text('Register'),
-              style: FilledButton.styleFrom(backgroundColor: AppTheme.primary, foregroundColor: AppTheme.onPrimary),
-            ),
-          ],
-        ),
+              const SizedBox(height: 8),
+              FilledButton.icon(
+                onPressed: widget.onRegisterPressed,
+                icon: const Icon(FontAwesomeIcons.userPlus, size: 18),
+                label: const Text('Register'),
+                style: FilledButton.styleFrom(backgroundColor: AppTheme.primary, foregroundColor: AppTheme.onPrimary),
+              ),
+            ],
+          )
+        else
+          Row(
+            children: [
+              Expanded(
+                child: TextField(
+                  controller: _searchController,
+                  decoration: InputDecoration(
+                    hintText: 'Search by name…',
+                    prefixIcon: const Icon(Icons.search, size: 20),
+                    border: OutlineInputBorder(borderRadius: BorderRadius.circular(12)),
+                    contentPadding: const EdgeInsets.symmetric(horizontal: 12, vertical: 10),
+                    isDense: true,
+                  ),
+                  onChanged: (_) => setState(() {}),
+                ),
+              ),
+              const SizedBox(width: 8),
+              FilledButton.icon(
+                onPressed: widget.onRegisterPressed,
+                icon: const Icon(FontAwesomeIcons.userPlus, size: 18),
+                label: const Text('Register'),
+                style: FilledButton.styleFrom(backgroundColor: AppTheme.primary, foregroundColor: AppTheme.onPrimary),
+              ),
+            ],
+          ),
         const SizedBox(height: 12),
         Expanded(
           child: DashboardScreen(
@@ -653,6 +675,8 @@ class _FeesTabState extends State<_FeesTab> {
     final paid = _summary?['paid'] as Map<String, dynamic>? ?? {};
     final due = _summary?['due'] as Map<String, dynamic>? ?? {};
     final overdue = _summary?['overdue'] as Map<String, dynamic>? ?? {};
+    final padding = LayoutConstants.screenPadding(context);
+    final isNarrow = MediaQuery.sizeOf(context).width < 400;
     return RefreshIndicator(
       onRefresh: () {
         ApiClient.instance.invalidateCache();
@@ -660,46 +684,56 @@ class _FeesTabState extends State<_FeesTab> {
       },
       color: AppTheme.primary,
       child: SingleChildScrollView(
-        padding: const EdgeInsets.only(bottom: _padding),
+        padding: EdgeInsets.only(left: padding, right: padding, bottom: padding),
         child: Column(
           crossAxisAlignment: CrossAxisAlignment.stretch,
           children: [
-            Row(
-              children: [
-                Expanded(
-                  child: _FeeChip(
-                    'Paid',
-                    paid['count'] ?? 0,
-                    paid['total_amount'] ?? 0,
-                    AppTheme.success,
-                    isSelected: _statusFilter == 'Paid',
-                    onTap: () => setState(() => _statusFilter = _statusFilter == 'Paid' ? null : 'Paid'),
+            isNarrow
+                ? Wrap(
+                    spacing: 8,
+                    runSpacing: 8,
+                    children: [
+                      _FeeChip('Paid', paid['count'] ?? 0, paid['total_amount'] ?? 0, AppTheme.success, isSelected: _statusFilter == 'Paid', onTap: () => setState(() => _statusFilter = _statusFilter == 'Paid' ? null : 'Paid')),
+                      _FeeChip('Due', due['count'] ?? 0, due['total_amount'] ?? 0, AppTheme.primary, isSelected: _statusFilter == 'Due', onTap: () => setState(() => _statusFilter = _statusFilter == 'Due' ? null : 'Due')),
+                      _FeeChip('Overdue', overdue['count'] ?? 0, overdue['total_amount'] ?? 0, Colors.orange, isSelected: _statusFilter == 'Overdue', onTap: () => setState(() => _statusFilter = _statusFilter == 'Overdue' ? null : 'Overdue')),
+                    ],
+                  )
+                : Row(
+                    children: [
+                      Expanded(
+                        child: _FeeChip(
+                          'Paid',
+                          paid['count'] ?? 0,
+                          paid['total_amount'] ?? 0,
+                          AppTheme.success,
+                          isSelected: _statusFilter == 'Paid',
+                          onTap: () => setState(() => _statusFilter = _statusFilter == 'Paid' ? null : 'Paid'),
+                        ),
+                      ),
+                      const SizedBox(width: 12),
+                      Expanded(
+                        child: _FeeChip(
+                          'Due',
+                          due['count'] ?? 0,
+                          due['total_amount'] ?? 0,
+                          AppTheme.primary,
+                          isSelected: _statusFilter == 'Due',
+                          onTap: () => setState(() => _statusFilter = _statusFilter == 'Due' ? null : 'Due'),
+                        ),
+                      ),
+                      const SizedBox(width: 12),
+                      Expanded(
+                        child: _FeeChip(
+                          'Overdue',
+                          overdue['count'] ?? 0,
+                          overdue['total_amount'] ?? 0,
+                          Colors.orange,
+                          isSelected: _statusFilter == 'Overdue',
+                          onTap: () => setState(() => _statusFilter = _statusFilter == 'Overdue' ? null : 'Overdue'),
+                        ),
+                      ),
+                    ],
                   ),
-                ),
-                const SizedBox(width: 12),
-                Expanded(
-                  child: _FeeChip(
-                    'Due',
-                    due['count'] ?? 0,
-                    due['total_amount'] ?? 0,
-                    AppTheme.primary,
-                    isSelected: _statusFilter == 'Due',
-                    onTap: () => setState(() => _statusFilter = _statusFilter == 'Due' ? null : 'Due'),
-                  ),
-                ),
-                const SizedBox(width: 12),
-                Expanded(
-                  child: _FeeChip(
-                    'Overdue',
-                    overdue['count'] ?? 0,
-                    overdue['total_amount'] ?? 0,
-                    Colors.orange,
-                    isSelected: _statusFilter == 'Overdue',
-                    onTap: () => setState(() => _statusFilter = _statusFilter == 'Overdue' ? null : 'Overdue'),
-                  ),
-                ),
-              ],
-            ),
             const SizedBox(height: 24),
             Text('All Payments', style: GoogleFonts.poppins(fontSize: 18, fontWeight: FontWeight.w600, color: AppTheme.onSurface)),
             if (_statusFilter != null)
@@ -721,7 +755,7 @@ class _FeesTabState extends State<_FeesTab> {
                 margin: const EdgeInsets.only(bottom: 8),
                 shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12), side: BorderSide(color: AppTheme.primary.withOpacity(0.3))),
                 child: ListTile(
-                  contentPadding: const EdgeInsets.symmetric(horizontal: _padding, vertical: 8),
+                  contentPadding: EdgeInsets.symmetric(horizontal: LayoutConstants.screenPadding(context), vertical: 8),
                   title: Text(map['member_name'] ?? '', style: GoogleFonts.poppins(color: AppTheme.onSurface, fontWeight: FontWeight.w500)),
                   subtitle: Text('${map['fee_type']} • ${map['period'] ?? 'Registration'}', style: TextStyle(color: Colors.grey.shade600, fontSize: 12)),
                   trailing: Row(
