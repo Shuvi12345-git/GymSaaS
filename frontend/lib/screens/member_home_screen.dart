@@ -7,11 +7,14 @@
 // ---------------------------------------------------------------------------
 
 import 'dart:convert';
+import 'dart:io';
 
 import 'package:flutter/material.dart';
 import 'package:font_awesome_flutter/font_awesome_flutter.dart';
 import 'package:google_fonts/google_fonts.dart';
 import 'package:http/http.dart' as http;
+import 'package:image_picker/image_picker.dart';
+import 'package:file_picker/file_picker.dart';
 
 import '../core/api_client.dart';
 import '../widgets/skeleton_loading.dart';
@@ -36,11 +39,91 @@ class _MemberHomeScreenState extends State<MemberHomeScreen> {
   bool _checkedInToday = false;
   bool _checkedOutToday = false;
   final GlobalKey _inboxKey = GlobalKey();
+  /// Full member (photo, id_document) from GET /members/{id}; null until loaded.
+  Map<String, dynamic>? _fullMember;
+  final ImagePicker _imagePicker = ImagePicker();
 
   @override
   void initState() {
     super.initState();
     _loadPayments();
+    _loadFullMember();
+  }
+
+  Future<void> _loadFullMember() async {
+    final mid = widget.member['id'] as String?;
+    if (mid == null) return;
+    try {
+      final r = await ApiClient.instance.get('/members/$mid', useCache: false);
+      if (mounted && r.statusCode == 200) {
+        final map = jsonDecode(r.body) as Map<String, dynamic>?;
+        setState(() => _fullMember = map);
+      }
+    } catch (_) {}
+  }
+
+  Future<String?> _pickImage() async {
+    final XFile? file = await _imagePicker.pickImage(source: ImageSource.gallery, maxWidth: 1024, maxHeight: 1024, imageQuality: 85);
+    if (file == null) return null;
+    final bytes = await file.readAsBytes();
+    return base64Encode(bytes);
+  }
+
+  Future<(String, String)?> _pickIdDocument() async {
+    final result = await FilePicker.platform.pickFiles(type: FileType.custom, allowedExtensions: ['pdf', 'jpg', 'jpeg', 'png'], withData: true);
+    if (result == null || result.files.isEmpty) return null;
+    final file = result.files.single;
+    List<int>? bytes = file.bytes;
+    if (bytes == null && file.path != null) {
+      try { bytes = await File(file.path!).readAsBytes(); } catch (_) {}
+    }
+    if (bytes == null) return null;
+    const types = ['Aadhar', 'Driving Licence', 'Voter ID', 'Passport'];
+    final type = await showDialog<String>(
+      context: context,
+      builder: (ctx) => AlertDialog(
+        title: const Text('ID document type'),
+        content: Column(
+          mainAxisSize: MainAxisSize.min,
+          children: types.map((t) => ListTile(title: Text(t), onTap: () => Navigator.pop(ctx, t))).toList(),
+        ),
+        actions: [TextButton(onPressed: () => Navigator.pop(ctx), child: const Text('Cancel'))],
+      ),
+    );
+    if (type == null) return null;
+    return (base64Encode(bytes!), type);
+  }
+
+  Future<void> _updatePhoto(String? base64) async {
+    final mid = widget.member['id'] as String?;
+    if (mid == null) return;
+    try {
+      final r = await ApiClient.instance.patch(
+        '/members/$mid/photo',
+        headers: {'Content-Type': 'application/json'},
+        body: jsonEncode({'photo_base64': base64}),
+      );
+      if (mounted && r.statusCode >= 200 && r.statusCode < 300) await _loadFullMember();
+    } catch (e) {
+      if (mounted) ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text('Error: ${e.toString().split('\n').first}')));
+    }
+  }
+
+  Future<void> _updateIdDocument(String? base64, String? type) async {
+    final mid = widget.member['id'] as String?;
+    if (mid == null) return;
+    try {
+      final body = <String, dynamic>{'id_document_base64': base64};
+      if (type != null) body['id_document_type'] = type;
+      final r = await ApiClient.instance.patch(
+        '/members/$mid/id-document',
+        headers: {'Content-Type': 'application/json'},
+        body: jsonEncode(body),
+      );
+      if (mounted && r.statusCode >= 200 && r.statusCode < 300) await _loadFullMember();
+    } catch (e) {
+      if (mounted) ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text('Error: ${e.toString().split('\n').first}')));
+    }
   }
 
   Future<void> _checkInSelf() async {
@@ -167,6 +250,103 @@ class _MemberHomeScreenState extends State<MemberHomeScreen> {
                       Text('Batch: $batch', style: GoogleFonts.poppins(color: AppTheme.primary)),
                       Text('Status: $status', style: GoogleFonts.poppins(color: Colors.grey.shade600)),
                       if (lastAttendance.isNotEmpty) Text('Last check-in: $lastAttendance', style: GoogleFonts.poppins(color: Colors.grey.shade600, fontSize: 13)),
+                    ],
+                  ),
+                ),
+              ),
+              const SizedBox(height: 16),
+              // Profile picture & ID document – upload, delete, re-upload (member can update own)
+              Card(
+                color: AppTheme.surfaceVariant,
+                shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(radius)),
+                child: Padding(
+                  padding: EdgeInsets.all(padding),
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      Row(
+                        children: [
+                          Icon(Icons.photo_camera_outlined, size: 20, color: AppTheme.primary),
+                          const SizedBox(width: 8),
+                          Text('Profile & ID', style: GoogleFonts.poppins(fontSize: 16, fontWeight: FontWeight.w600, color: AppTheme.onSurface)),
+                        ],
+                      ),
+                      const SizedBox(height: 16),
+                      Row(
+                        crossAxisAlignment: CrossAxisAlignment.start,
+                        children: [
+                          CircleAvatar(
+                            radius: 36,
+                            backgroundColor: AppTheme.primary.withOpacity(0.2),
+                            foregroundColor: AppTheme.primary,
+                            backgroundImage: _fullMember?['photo_base64'] != null
+                                ? MemoryImage(base64Decode(_fullMember!['photo_base64'] as String))
+                                : null,
+                            onBackgroundImageError: _fullMember?['photo_base64'] != null ? (_, __) {} : null,
+                            child: _fullMember?['photo_base64'] == null
+                                ? Text((name.isNotEmpty ? name[0] : '?').toUpperCase(), style: GoogleFonts.poppins(fontSize: 28, fontWeight: FontWeight.bold))
+                                : null,
+                          ),
+                          const SizedBox(width: 16),
+                          Expanded(
+                            child: Column(
+                              crossAxisAlignment: CrossAxisAlignment.start,
+                              children: [
+                                Text('Profile picture', style: GoogleFonts.poppins(fontSize: 14, fontWeight: FontWeight.w500, color: AppTheme.onSurface)),
+                                const SizedBox(height: 6),
+                                Wrap(
+                                  spacing: 8,
+                                  runSpacing: 8,
+                                  children: [
+                                    FilledButton.tonal(
+                                      onPressed: () async {
+                                        final b = await _pickImage();
+                                        if (b != null) await _updatePhoto(b);
+                                      },
+                                      style: FilledButton.styleFrom(backgroundColor: AppTheme.primary.withOpacity(0.15), foregroundColor: AppTheme.primary),
+                                      child: const Text('Change'),
+                                    ),
+                                    if (_fullMember?['photo_base64'] != null)
+                                      OutlinedButton(
+                                        onPressed: () => _updatePhoto(null),
+                                        style: OutlinedButton.styleFrom(foregroundColor: AppTheme.error, side: const BorderSide(color: AppTheme.error)),
+                                        child: const Text('Remove'),
+                                      ),
+                                  ],
+                                ),
+                                const SizedBox(height: 16),
+                                Text(
+                                  _fullMember?['id_document_base64'] != null
+                                      ? 'ID: ${_fullMember!['id_document_type'] ?? 'Uploaded'}'
+                                      : 'Identity document',
+                                  style: GoogleFonts.poppins(fontSize: 14, color: AppTheme.onSurface),
+                                ),
+                                const SizedBox(height: 6),
+                                Wrap(
+                                  spacing: 8,
+                                  runSpacing: 8,
+                                  children: [
+                                    FilledButton.tonal(
+                                      onPressed: () async {
+                                        final pair = await _pickIdDocument();
+                                        if (pair != null) await _updateIdDocument(pair.$1, pair.$2);
+                                      },
+                                      style: FilledButton.styleFrom(backgroundColor: AppTheme.primary.withOpacity(0.15), foregroundColor: AppTheme.primary),
+                                      child: Text(_fullMember?['id_document_base64'] != null ? 'Re-upload' : 'Upload'),
+                                    ),
+                                    if (_fullMember?['id_document_base64'] != null)
+                                      OutlinedButton(
+                                        onPressed: () => _updateIdDocument(null, null),
+                                        style: OutlinedButton.styleFrom(foregroundColor: AppTheme.error, side: const BorderSide(color: AppTheme.error)),
+                                        child: const Text('Remove'),
+                                      ),
+                                  ],
+                                ),
+                              ],
+                            ),
+                          ),
+                        ],
+                      ),
                     ],
                   ),
                 ),

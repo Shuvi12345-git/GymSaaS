@@ -30,6 +30,8 @@ class Member {
   final String? workoutSchedule;
   final String? dietChart;
   final String? photoBase64;
+  final String? idDocumentBase64;
+  final String? idDocumentType;  // Aadhar, Driving Licence, Voter ID, Passport
   final DateTime? createdAt;
 
   Member({
@@ -43,6 +45,8 @@ class Member {
     this.workoutSchedule,
     this.dietChart,
     this.photoBase64,
+    this.idDocumentBase64,
+    this.idDocumentType,
     this.createdAt,
   });
 
@@ -63,6 +67,8 @@ class Member {
       workoutSchedule: json['workout_schedule'] as String?,
       dietChart: json['diet_chart'] as String?,
       photoBase64: json['photo_base64'] as String?,
+      idDocumentBase64: json['id_document_base64'] as String?,
+      idDocumentType: json['id_document_type'] as String?,
       createdAt: createdAt,
     );
   }

@@ -134,6 +134,7 @@ class MemberCreate(BaseModel):
     status: str = Field(default="Active", max_length=50)
     photo_base64: str | None = None  # optional member photo (JPEG/PNG base64)
     id_document_base64: str | None = None  # optional ID document (PDF/image base64)
+    id_document_type: str | None = None  # e.g. Aadhar, Driving Licence, Voter ID, Passport
 
 
 class MemberResponse(BaseModel):
@@ -150,6 +151,7 @@ class MemberResponse(BaseModel):
     diet_chart: str | None = None
     photo_base64: str | None = None
     id_document_base64: str | None = None
+    id_document_type: str | None = None
 
 
 class MemberPTUpdate(BaseModel):
@@ -167,6 +169,17 @@ class MemberUpdate(BaseModel):
     status: str | None = None
     workout_schedule: str | None = None
     diet_chart: str | None = None
+
+
+class PhotoUpdate(BaseModel):
+    """Set or clear member profile photo. Send photo_base64: null to delete."""
+    photo_base64: str | None = None
+
+
+class IdDocumentUpdate(BaseModel):
+    """Set or clear identity document. Send id_document_base64: null to delete."""
+    id_document_base64: str | None = None
+    id_document_type: str | None = None  # Aadhar, Driving Licence, Voter ID, Passport
 
 
 class PaymentResponse(BaseModel):
@@ -295,6 +308,7 @@ async def create_member(member: MemberCreate):
         diet_chart=doc.get("diet_chart"),
         photo_base64=doc.get("photo_base64"),
         id_document_base64=doc.get("id_document_base64"),
+        id_document_type=doc.get("id_document_type"),
     )
 
 
@@ -419,6 +433,45 @@ async def update_member(member_id: str, body: MemberUpdate):
     return _doc_to_member_response(result)
 
 
+@app.patch("/members/{member_id}/photo", response_model=MemberResponse)
+async def update_member_photo(member_id: str, body: PhotoUpdate):
+    """Upload or remove member profile picture. Both member and admin can call this. Send photo_base64: null to delete."""
+    from bson import ObjectId
+    try:
+        oid = ObjectId(member_id)
+    except Exception:
+        raise HTTPException(status_code=400, detail="Invalid member ID")
+    if body.photo_base64 is None:
+        await members_collection.update_one({"_id": oid}, {"$unset": {"photo_base64": ""}})
+    else:
+        await members_collection.update_one({"_id": oid}, {"$set": {"photo_base64": body.photo_base64}})
+    doc = await members_collection.find_one({"_id": oid})
+    if not doc:
+        raise HTTPException(status_code=404, detail="Member not found")
+    return _doc_to_member_response(doc)
+
+
+@app.patch("/members/{member_id}/id-document", response_model=MemberResponse)
+async def update_member_id_document(member_id: str, body: IdDocumentUpdate):
+    """Upload or remove identity document (Aadhar, Driving Licence, Voter ID, Passport). Send id_document_base64: null to delete."""
+    from bson import ObjectId
+    try:
+        oid = ObjectId(member_id)
+    except Exception:
+        raise HTTPException(status_code=400, detail="Invalid member ID")
+    if body.id_document_base64 is None:
+        await members_collection.update_one({"_id": oid}, {"$unset": {"id_document_base64": "", "id_document_type": ""}})
+    else:
+        update = {"id_document_base64": body.id_document_base64}
+        if body.id_document_type is not None:
+            update["id_document_type"] = body.id_document_type
+        await members_collection.update_one({"_id": oid}, {"$set": update})
+    doc = await members_collection.find_one({"_id": oid})
+    if not doc:
+        raise HTTPException(status_code=404, detail="Member not found")
+    return _doc_to_member_response(doc)
+
+
 def _doc_to_member_response(doc, include_photos: bool = True) -> MemberResponse:
     return MemberResponse(
                 id=str(doc["_id"]),
@@ -434,6 +487,7 @@ def _doc_to_member_response(doc, include_photos: bool = True) -> MemberResponse:
         diet_chart=doc.get("diet_chart"),
         photo_base64=doc.get("photo_base64") if include_photos else None,
         id_document_base64=doc.get("id_document_base64") if include_photos else None,
+        id_document_type=doc.get("id_document_type") if include_photos else None,
     )
 
 

@@ -41,6 +41,8 @@ class _RegistrationScreenState extends State<RegistrationScreen> {
   String? _photoBase64;
   /// ID document (PDF or image) as base64; null if not set.
   String? _idDocumentBase64;
+  /// Type of ID: Aadhar, Driving Licence, Voter ID, Passport.
+  String _idDocumentType = 'Aadhar';
 
   final ImagePicker _imagePicker = ImagePicker();
 
@@ -116,7 +118,10 @@ class _RegistrationScreenState extends State<RegistrationScreen> {
         'status': 'Active',
       };
       if (_photoBase64 != null) body['photo_base64'] = _photoBase64;
-      if (_idDocumentBase64 != null) body['id_document_base64'] = _idDocumentBase64;
+      if (_idDocumentBase64 != null) {
+        body['id_document_base64'] = _idDocumentBase64;
+        body['id_document_type'] = _idDocumentType;
+      }
 
       final response = await ApiClient.instance.post(
         '/members',
@@ -136,6 +141,7 @@ class _RegistrationScreenState extends State<RegistrationScreen> {
           _batch = 'Morning';
           _photoBase64 = null;
           _idDocumentBase64 = null;
+          _idDocumentType = 'Aadhar';
         });
         ScaffoldMessenger.of(context).showSnackBar(
           const SnackBar(
@@ -297,9 +303,23 @@ class _RegistrationScreenState extends State<RegistrationScreen> {
                       color: AppTheme.onSurfaceVariant,
                     ),
                   ),
-                  const SizedBox(height: 8),
+                  const SizedBox(height: 12),
+                  DropdownButtonFormField<String>(
+                    value: _idDocumentType,
+                    decoration: _inputDecoration('ID document type', null),
+                    dropdownColor: AppTheme.surfaceVariant,
+                    style: GoogleFonts.poppins(color: AppTheme.onSurface, fontSize: 16),
+                    items: const [
+                      DropdownMenuItem(value: 'Aadhar', child: Text('Aadhar')),
+                      DropdownMenuItem(value: 'Driving Licence', child: Text('Driving Licence')),
+                      DropdownMenuItem(value: 'Voter ID', child: Text('Voter ID')),
+                      DropdownMenuItem(value: 'Passport', child: Text('Passport')),
+                    ],
+                    onChanged: (v) => setState(() => _idDocumentType = v ?? 'Aadhar'),
+                  ),
+                  const SizedBox(height: 12),
                   _UploadCard(
-                    label: 'Upload ID',
+                    label: 'Upload ID document',
                     icon: Icons.badge_rounded,
                     hasFile: _idDocumentBase64 != null,
                     onTap: _pickIdDocument,

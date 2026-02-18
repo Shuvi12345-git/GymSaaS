@@ -7,10 +7,13 @@
 // ---------------------------------------------------------------------------
 
 import 'dart:convert';
+import 'dart:io';
 
 import 'package:flutter/material.dart';
 import 'package:font_awesome_flutter/font_awesome_flutter.dart';
 import 'package:google_fonts/google_fonts.dart';
+import 'package:image_picker/image_picker.dart';
+import 'package:file_picker/file_picker.dart';
 import 'package:intl/intl.dart';
 
 import '../core/api_client.dart';
@@ -242,14 +245,88 @@ class _MemberDetailScreenState extends State<MemberDetailScreen> with SingleTick
   bool _loadingPayments = true;
   bool _loadingAttendance = true;
 
+  final ImagePicker _imagePicker = ImagePicker();
+
   @override
   void initState() {
     super.initState();
     _member = widget.member;
     _tabController = TabController(length: 4, vsync: this);
+    _loadFullMember(); // Fetch full member (photo, id_document) in case list was brief
     _loadStats();
     _loadPayments();
     _loadAttendance();
+  }
+
+  /// Reload full member (including photo and ID document) from API.
+  Future<void> _loadFullMember() async {
+    try {
+      final r = await ApiClient.instance.get('/members/${_member.id}', useCache: false);
+      if (mounted && r.statusCode == 200) {
+        final map = jsonDecode(r.body) as Map<String, dynamic>?;
+        if (map != null) setState(() => _member = Member.fromJson(map));
+      }
+    } catch (_) {}
+  }
+
+  Future<String?> _pickImage() async {
+    final XFile? file = await _imagePicker.pickImage(source: ImageSource.gallery, maxWidth: 1024, maxHeight: 1024, imageQuality: 85);
+    if (file == null) return null;
+    final bytes = await file.readAsBytes();
+    return base64Encode(bytes);
+  }
+
+  Future<(String, String)?> _pickIdDocument() async {
+    final result = await FilePicker.platform.pickFiles(type: FileType.custom, allowedExtensions: ['pdf', 'jpg', 'jpeg', 'png'], withData: true);
+    if (result == null || result.files.isEmpty) return null;
+    final file = result.files.single;
+    List<int>? bytes = file.bytes;
+    if (bytes == null && file.path != null) {
+      try { bytes = await File(file.path!).readAsBytes(); } catch (_) {}
+    }
+    if (bytes == null) return null;
+    const types = ['Aadhar', 'Driving Licence', 'Voter ID', 'Passport'];
+    final type = await showDialog<String>(
+      context: context,
+      builder: (ctx) => AlertDialog(
+        title: const Text('ID document type'),
+        content: Column(
+          mainAxisSize: MainAxisSize.min,
+          children: types.map((t) => ListTile(title: Text(t), onTap: () => Navigator.pop(ctx, t))).toList(),
+        ),
+        actions: [TextButton(onPressed: () => Navigator.pop(ctx), child: const Text('Cancel'))],
+      ),
+    );
+    if (type == null) return null;
+    return (base64Encode(bytes!), type);
+  }
+
+  Future<void> _updateMemberPhoto(String? base64) async {
+    try {
+      final r = await ApiClient.instance.patch(
+        '/members/${_member.id}/photo',
+        headers: {'Content-Type': 'application/json'},
+        body: jsonEncode({'photo_base64': base64}),
+      );
+      if (mounted && r.statusCode >= 200 && r.statusCode < 300) await _loadFullMember();
+    } catch (e) {
+      if (mounted) ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text('Error: ${e.toString().split('\n').first}')));
+    }
+  }
+
+  Future<void> _updateMemberIdDocument(String? base64, String? type) async {
+    try {
+      final body = <String, dynamic>{'id_document_base64': base64};
+      if (type != null) body['id_document_type'] = type;
+      final r = await ApiClient.instance.patch(
+        '/members/${_member.id}/id-document',
+        headers: {'Content-Type': 'application/json'},
+        body: jsonEncode(body),
+      );
+      if (mounted && r.statusCode >= 200 && r.statusCode < 300) await _loadFullMember();
+    } catch (e) {
+      if (mounted) ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text('Error: ${e.toString().split('\n').first}')));
+    }
   }
 
   @override
@@ -417,7 +494,19 @@ class _MemberDetailScreenState extends State<MemberDetailScreen> with SingleTick
             child: TabBarView(
               controller: _tabController,
               children: [
-                _OverviewTab(member: m),
+                _OverviewTab(
+                  member: m,
+                  onUpdatePhoto: () async {
+                    final b = await _pickImage();
+                    if (b != null) await _updateMemberPhoto(b);
+                  },
+                  onRemovePhoto: () => _updateMemberPhoto(null),
+                  onUpdateIdDocument: () async {
+                    final pair = await _pickIdDocument();
+                    if (pair != null) await _updateMemberIdDocument(pair.$1, pair.$2);
+                  },
+                  onRemoveIdDocument: () => _updateMemberIdDocument(null, null),
+                ),
                 _PaymentsTab(payments: _payments, loading: _loadingPayments, onRefresh: _loadPayments),
                 _AttendanceTab(
                   stats: _attendanceStats,
@@ -519,8 +608,18 @@ class _MemberSummaryCard extends StatelessWidget {
 
 class _OverviewTab extends StatelessWidget {
   final Member member;
+  final Future<void> Function() onUpdatePhoto;
+  final VoidCallback onRemovePhoto;
+  final Future<void> Function() onUpdateIdDocument;
+  final VoidCallback onRemoveIdDocument;
 
-  const _OverviewTab({required this.member});
+  const _OverviewTab({
+    required this.member,
+    required this.onUpdatePhoto,
+    required this.onRemovePhoto,
+    required this.onUpdateIdDocument,
+    required this.onRemoveIdDocument,
+  });
 
   @override
   Widget build(BuildContext context) {
@@ -530,6 +629,115 @@ class _OverviewTab extends StatelessWidget {
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.stretch,
         children: [
+          // Profile picture & ID document – upload, delete, re-upload
+          Card(
+            color: AppTheme.surfaceVariant,
+            shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
+            child: Padding(
+              padding: EdgeInsets.all(padding),
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  Row(
+                    children: [
+                      Icon(Icons.photo_camera_outlined, size: 20, color: AppTheme.primary),
+                      const SizedBox(width: 8),
+                      Text(
+                        'Profile & ID',
+                        style: GoogleFonts.poppins(fontSize: 16, fontWeight: FontWeight.w600, color: AppTheme.onSurface),
+                      ),
+                    ],
+                  ),
+                  const SizedBox(height: 16),
+                  Row(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      CircleAvatar(
+                        radius: 40,
+                        backgroundColor: AppTheme.primary.withOpacity(0.2),
+                        foregroundColor: AppTheme.primary,
+                        backgroundImage: member.photoBase64 != null
+                            ? MemoryImage(base64Decode(member.photoBase64!))
+                            : null,
+                        onBackgroundImageError: member.photoBase64 != null ? (_, __) {} : null,
+                        child: member.photoBase64 == null
+                            ? Text((member.name.isNotEmpty ? member.name[0] : '?').toUpperCase(), style: GoogleFonts.poppins(fontSize: 28, fontWeight: FontWeight.bold))
+                            : null,
+                      ),
+                      const SizedBox(width: 16),
+                      Expanded(
+                        child: Column(
+                          crossAxisAlignment: CrossAxisAlignment.start,
+                          children: [
+                            Text('Profile picture', style: GoogleFonts.poppins(fontSize: 14, fontWeight: FontWeight.w500, color: AppTheme.onSurface)),
+                            const SizedBox(height: 6),
+                            Wrap(
+                              spacing: 8,
+                              runSpacing: 8,
+                              children: [
+                                FilledButton.tonal(
+                                  onPressed: () => onUpdatePhoto(),
+                                  style: FilledButton.styleFrom(backgroundColor: AppTheme.primary.withOpacity(0.15), foregroundColor: AppTheme.primary),
+                                  child: const Text('Change'),
+                                ),
+                                if (member.photoBase64 != null)
+                                  OutlinedButton(
+                                    onPressed: onRemovePhoto,
+                                    style: OutlinedButton.styleFrom(foregroundColor: AppTheme.error, side: const BorderSide(color: AppTheme.error)),
+                                    child: const Text('Remove'),
+                                  ),
+                              ],
+                            ),
+                          ],
+                        ),
+                      ),
+                    ],
+                  ),
+                  const SizedBox(height: 20),
+                  const Divider(height: 1),
+                  const SizedBox(height: 16),
+                  Row(
+                    children: [
+                      Icon(member.idDocumentBase64 != null ? Icons.badge_rounded : Icons.badge_outlined, size: 20, color: AppTheme.primary),
+                      const SizedBox(width: 8),
+                      Expanded(
+                        child: Column(
+                          crossAxisAlignment: CrossAxisAlignment.start,
+                          children: [
+                            Text(
+                              member.idDocumentBase64 != null
+                                  ? 'ID document: ${member.idDocumentType ?? 'Uploaded'}'
+                                  : 'Identity document (Aadhar, Passport, etc.)',
+                              style: GoogleFonts.poppins(fontSize: 14, color: AppTheme.onSurface),
+                            ),
+                            const SizedBox(height: 6),
+                            Wrap(
+                              spacing: 8,
+                              runSpacing: 8,
+                              children: [
+                                FilledButton.tonal(
+                                  onPressed: () => onUpdateIdDocument(),
+                                  style: FilledButton.styleFrom(backgroundColor: AppTheme.primary.withOpacity(0.15), foregroundColor: AppTheme.primary),
+                                  child: Text(member.idDocumentBase64 != null ? 'Re-upload' : 'Upload'),
+                                ),
+                                if (member.idDocumentBase64 != null)
+                                  OutlinedButton(
+                                    onPressed: onRemoveIdDocument,
+                                    style: OutlinedButton.styleFrom(foregroundColor: AppTheme.error, side: const BorderSide(color: AppTheme.error)),
+                                    child: const Text('Remove'),
+                                  ),
+                              ],
+                            ),
+                          ],
+                        ),
+                      ),
+                    ],
+                  ),
+                ],
+              ),
+            ),
+          ),
+          const SizedBox(height: 16),
           Card(
             color: AppTheme.surfaceVariant,
             shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
