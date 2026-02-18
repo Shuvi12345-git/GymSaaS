@@ -1,3 +1,10 @@
+// ---------------------------------------------------------------------------
+// Member login – phone + OTP; on success navigates to Member Home.
+// ---------------------------------------------------------------------------
+// Backend validates OTP (or simulated flow). Member is identified by phone
+// for subsequent API calls (attendance, payments, etc.).
+// ---------------------------------------------------------------------------
+
 import 'dart:convert';
 
 import 'package:flutter/material.dart';
@@ -60,6 +67,8 @@ class _MemberLoginScreenState extends State<MemberLoginScreen> {
       if (!mounted) return;
       if (r.statusCode >= 200 && r.statusCode < 300) {
         final member = jsonDecode(r.body) as Map<String, dynamic>;
+        setState(() => _loading = false);
+        if (!mounted) return;
         Navigator.pushReplacement(
           context,
           MaterialPageRoute(builder: (_) => MemberHomeScreen(member: member)),
@@ -77,13 +86,18 @@ class _MemberLoginScreenState extends State<MemberLoginScreen> {
     return Scaffold(
       backgroundColor: AppTheme.surface,
       appBar: AppBar(
-        title: Text('Member Login', style: GoogleFonts.poppins(color: AppTheme.onSurface)),
-        backgroundColor: AppTheme.surface,
-        foregroundColor: AppTheme.onSurface,
+        leading: IconButton(
+          icon: const Icon(Icons.arrow_back_ios_new_rounded),
+          onPressed: () => Navigator.of(context).pop(),
+        ),
+        backgroundColor: Colors.transparent,
+        elevation: 0,
+        centerTitle: true,
+        title: Text('Member Login', style: GoogleFonts.poppins(fontSize: 18, fontWeight: FontWeight.w600, color: AppTheme.onSurface)),
       ),
-      body: Padding(
-        padding: const EdgeInsets.all(24),
+      body: SafeArea(
         child: SingleChildScrollView(
+          padding: const EdgeInsets.all(_padding),
           child: Column(
             crossAxisAlignment: CrossAxisAlignment.stretch,
             children: [
@@ -91,53 +105,94 @@ class _MemberLoginScreenState extends State<MemberLoginScreen> {
               Center(
                 child: Image.asset(
                   'assets/logo.png',
-                  height: 80,
-                  width: 120,
+                  height: 72,
+                  width: 72,
                   fit: BoxFit.contain,
                   errorBuilder: (_, __, ___) => Container(
-                    width: 80,
-                    height: 80,
+                    width: 72,
+                    height: 72,
                     decoration: BoxDecoration(
                       color: AppTheme.primary.withOpacity(0.2),
                       borderRadius: BorderRadius.circular(12),
                     ),
-                    child: const Icon(Icons.fitness_center, color: AppTheme.primary, size: 40),
+                    child: const Icon(Icons.fitness_center, color: AppTheme.primary, size: 36),
                   ),
                 ),
               ),
-              const SizedBox(height: 24),
-              Text('Sign in with your registered phone', style: GoogleFonts.poppins(color: Colors.grey.shade600)),
-              const SizedBox(height: 24),
+              const SizedBox(height: 16),
+              Text(
+                'Are you a Gym Member? Login here',
+                style: GoogleFonts.poppins(fontSize: 18, fontWeight: FontWeight.w600, color: AppTheme.onSurface),
+                textAlign: TextAlign.center,
+              ),
+              const SizedBox(height: 8),
+              Text(
+                'Sign in with your registered phone',
+                style: GoogleFonts.poppins(color: Colors.grey.shade600),
+                textAlign: TextAlign.center,
+              ),
+              const SizedBox(height: 28),
               TextField(
                 controller: _phoneController,
                 keyboardType: TextInputType.phone,
-                decoration: const InputDecoration(labelText: 'Phone Number'),
-                style: GoogleFonts.poppins(),
+                decoration: InputDecoration(
+                  labelText: 'Phone',
+                  border: const OutlineInputBorder(),
+                  prefixIcon: const Icon(Icons.phone),
+                  filled: true,
+                  fillColor: AppTheme.surfaceVariant.withOpacity(0.5),
+                ),
+                style: GoogleFonts.poppins(color: AppTheme.onSurface),
+                onChanged: (_) => setState(() => _error = null),
               ),
-              const SizedBox(height: 16),
-              if (_error != null) ...[
-                Text(_error!, style: GoogleFonts.poppins(color: AppTheme.error, fontSize: 14)),
-                const SizedBox(height: 16),
-              ],
-              if (!_otpSent)
+              if (!_otpSent) ...[
+                const SizedBox(height: 20),
+                if (_error != null) ...[
+                  Text(_error!, style: GoogleFonts.poppins(color: Colors.red, fontSize: 13)),
+                  const SizedBox(height: 12),
+                ],
                 FilledButton(
                   onPressed: _loading ? null : _requestOtp,
-                  style: FilledButton.styleFrom(backgroundColor: AppTheme.primary, foregroundColor: AppTheme.onPrimary, padding: const EdgeInsets.symmetric(vertical: 16)),
-                  child: _loading ? const SizedBox(height: 24, width: 24, child: CircularProgressIndicator(strokeWidth: 2, color: AppTheme.onPrimary)) : const Text('Request OTP'),
-                )
-              else ...[
+                  style: FilledButton.styleFrom(
+                    backgroundColor: AppTheme.primary,
+                    foregroundColor: AppTheme.onPrimary,
+                    padding: const EdgeInsets.symmetric(vertical: 16),
+                    shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
+                  ),
+                  child: _loading
+                      ? const SizedBox(height: 22, width: 22, child: CircularProgressIndicator(strokeWidth: 2, color: AppTheme.onPrimary))
+                      : const Text('Send OTP'),
+                ),
+              ] else ...[
+                const SizedBox(height: 20),
                 TextField(
                   controller: _otpController,
                   keyboardType: TextInputType.number,
                   maxLength: 6,
-                  decoration: const InputDecoration(labelText: 'OTP (use 123456)'),
-                  style: GoogleFonts.poppins(),
+                  decoration: const InputDecoration(
+                    labelText: 'OTP',
+                    hintText: '123456',
+                    border: OutlineInputBorder(),
+                  ),
+                  style: GoogleFonts.poppins(color: AppTheme.onSurface),
+                  onChanged: (_) => setState(() => _error = null),
                 ),
+                if (_error != null) ...[
+                  const SizedBox(height: 8),
+                  Text(_error!, style: GoogleFonts.poppins(color: Colors.red, fontSize: 13)),
+                ],
                 const SizedBox(height: 16),
                 FilledButton(
                   onPressed: _loading ? null : _login,
-                  style: FilledButton.styleFrom(backgroundColor: AppTheme.primary, foregroundColor: AppTheme.onPrimary, padding: const EdgeInsets.symmetric(vertical: 16)),
-                  child: _loading ? const SizedBox(height: 24, width: 24, child: CircularProgressIndicator(strokeWidth: 2, color: AppTheme.onPrimary)) : const Text('Login'),
+                  style: FilledButton.styleFrom(
+                    backgroundColor: AppTheme.primary,
+                    foregroundColor: AppTheme.onPrimary,
+                    padding: const EdgeInsets.symmetric(vertical: 16),
+                    shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
+                  ),
+                  child: _loading
+                      ? const SizedBox(height: 22, width: 22, child: CircularProgressIndicator(strokeWidth: 2, color: AppTheme.onPrimary))
+                      : const Text('Login'),
                 ),
               ],
             ],

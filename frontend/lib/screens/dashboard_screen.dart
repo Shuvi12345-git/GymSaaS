@@ -1,16 +1,23 @@
+// ---------------------------------------------------------------------------
+// Members dashboard – list/search members, add, edit, view detail, check-in.
+// ---------------------------------------------------------------------------
+// Shown in Admin Dashboard "Members" tab. Fetches members from API, shows
+// [Member] list with search; tap opens [MemberDetailScreen]. Also used for
+// quick check-in from list. Defines local [Member] model for UI.
+// ---------------------------------------------------------------------------
+
 import 'dart:convert';
 
 import 'package:flutter/material.dart';
 import 'package:http/http.dart' as http;
 
 import '../core/api_client.dart';
+import '../theme/app_theme.dart';
+import '../widgets/animated_fade.dart';
+import '../widgets/skeleton_loading.dart';
 import 'attendance_report_screen.dart';
 
 final _apiBase = ApiClient.baseUrl;
-const _deepBlack = Color(0xFF0D0D0D);
-const _gold = Color(0xFFD4AF37);
-const _activeGreen = Color(0xFF22C55E);
-const _inactiveGrey = Color(0xFF6B7280);
 
 class Member {
   final String id;
@@ -22,6 +29,8 @@ class Member {
   final String status;
   final String? workoutSchedule;
   final String? dietChart;
+  final String? photoBase64;
+  final DateTime? createdAt;
 
   Member({
     required this.id,
@@ -33,9 +42,16 @@ class Member {
     required this.status,
     this.workoutSchedule,
     this.dietChart,
+    this.photoBase64,
+    this.createdAt,
   });
 
   factory Member.fromJson(Map<String, dynamic> json) {
+    DateTime? createdAt;
+    try {
+      final v = json['created_at'];
+      if (v != null) createdAt = DateTime.tryParse(v.toString());
+    } catch (_) {}
     return Member(
       id: json['id'] as String? ?? '',
       name: json['name'] as String? ?? '',
@@ -46,14 +62,18 @@ class Member {
       status: json['status'] as String? ?? 'Active',
       workoutSchedule: json['workout_schedule'] as String?,
       dietChart: json['diet_chart'] as String?,
+      photoBase64: json['photo_base64'] as String?,
+      createdAt: createdAt,
     );
   }
 }
 
 class DashboardScreen extends StatefulWidget {
   final bool isEmbedded;
+  final String? searchQuery;
+  final void Function(Member member)? onMemberTap;
 
-  const DashboardScreen({super.key, this.isEmbedded = false});
+  const DashboardScreen({super.key, this.isEmbedded = false, this.searchQuery, this.onMemberTap});
 
   @override
   State<DashboardScreen> createState() => _DashboardScreenState();
@@ -64,7 +84,14 @@ class _DashboardScreenState extends State<DashboardScreen> {
   bool _loading = true;
   String? _error;
   final Set<String> _checkingInIds = {};
+  final Set<String> _checkingOutIds = {};
   bool _runningAdminAction = false;
+
+  List<Member> get _filteredMembers {
+    final q = widget.searchQuery?.trim().toLowerCase();
+    if (q == null || q.isEmpty) return _members;
+    return _members.where((m) => m.name.toLowerCase().contains(q)).toList();
+  }
 
   @override
   void initState() {
@@ -72,28 +99,47 @@ class _DashboardScreenState extends State<DashboardScreen> {
     _loadMembers();
   }
 
-  Future<void> _loadMembers() async {
-    setState(() {
-      _loading = true;
-      _error = null;
-    });
+  static const int _pageSize = 50;
+  int _skip = 0;
+  bool _hasMore = true;
+  bool _loadingMore = false;
+
+  Future<void> _loadMembers({bool append = false}) async {
+    if (!append) {
+      setState(() { _loading = true; _error = null; _skip = 0; _hasMore = true; });
+    } else {
+      setState(() => _loadingMore = true);
+    }
 
     try {
-      final response = await ApiClient.instance.get('/members', useCache: true);
+      final response = await ApiClient.instance.get(
+        '/members',
+        queryParameters: {'brief': 'true', 'skip': '$_skip', 'limit': '$_pageSize'},
+        useCache: !append,
+      );
 
       if (!mounted) return;
 
       if (response.statusCode >= 200 && response.statusCode < 300) {
         final list = jsonDecode(response.body) as List<dynamic>;
+        final newMembers = list.map((e) => Member.fromJson(e as Map<String, dynamic>)).toList();
         setState(() {
-          _members = list.map((e) => Member.fromJson(e as Map<String, dynamic>)).toList();
-          _loading = false;
-          _error = null;
+          if (append) {
+            _members = [..._members, ...newMembers];
+            _loadingMore = false;
+          } else {
+            _members = newMembers;
+            _loading = false;
+            _error = null;
+          }
+          _skip += newMembers.length;
+          _hasMore = newMembers.length >= _pageSize;
         });
       } else {
         setState(() {
           _error = 'Failed to load members';
           _loading = false;
+          _loadingMore = false;
         });
       }
     } catch (e) {
@@ -101,7 +147,30 @@ class _DashboardScreenState extends State<DashboardScreen> {
       setState(() {
         _error = e.toString().split('\n').first;
         _loading = false;
+        _loadingMore = false;
       });
+    }
+  }
+
+  Future<void> _checkOut(Member m) async {
+    if (_checkingOutIds.contains(m.id)) return;
+    setState(() => _checkingOutIds.add(m.id));
+    try {
+      final response = await ApiClient.instance.post('/attendance/check-out/${m.id}');
+      if (!mounted) return;
+      if (response.statusCode >= 200 && response.statusCode < 300) {
+        hapticSuccess();
+        ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text('Checked out')));
+        _loadMembers(append: false);
+      } else {
+        final body = jsonDecode(response.body) as Map<String, dynamic>?;
+        final detail = body?['detail']?.toString() ?? 'Check-out failed';
+        ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text(detail)));
+      }
+    } catch (e) {
+      if (mounted) ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text('Error: ${e.toString().split('\n').first}')));
+    } finally {
+      if (mounted) setState(() => _checkingOutIds.remove(m.id));
     }
   }
 
@@ -110,7 +179,11 @@ class _DashboardScreenState extends State<DashboardScreen> {
     setState(() => _checkingInIds.add(m.id));
 
     try {
-      final response = await ApiClient.instance.post('/attendance/check-in/${m.id}');
+      final response = await ApiClient.instance
+          .post('/attendance/check-in/${m.id}')
+          .timeout(const Duration(seconds: 15), onTimeout: () {
+        throw Exception('Request timed out. Check your connection.');
+      });
 
       if (!mounted) return;
 
@@ -123,11 +196,12 @@ class _DashboardScreenState extends State<DashboardScreen> {
           } catch (_) {}
         }
         if (!mounted) return;
+        hapticSuccess();
         ScaffoldMessenger.of(context).showSnackBar(
           SnackBar(
             content: Row(
               children: [
-                const Icon(Icons.check_circle, color: _deepBlack, size: 22),
+                const Icon(Icons.check_circle, color: AppTheme.onPrimary, size: 22),
                 const SizedBox(width: 12),
                 Expanded(child: Text('Checked in for $batchLabel Batch!')),
               ],
@@ -135,7 +209,7 @@ class _DashboardScreenState extends State<DashboardScreen> {
             duration: const Duration(seconds: 4),
           ),
         );
-        _loadMembers();
+        _loadMembers(append: false);
       } else {
         String detail = 'Check-in failed';
         if (response.body.isNotEmpty) {
@@ -151,7 +225,7 @@ class _DashboardScreenState extends State<DashboardScreen> {
           SnackBar(
             content: Row(
               children: [
-                const Icon(Icons.warning_amber_rounded, color: _deepBlack, size: 22),
+                const Icon(Icons.warning_amber_rounded, color: AppTheme.onPrimary, size: 22),
                 const SizedBox(width: 12),
                 Expanded(child: Text(detail)),
               ],
@@ -162,26 +236,26 @@ class _DashboardScreenState extends State<DashboardScreen> {
       }
     } catch (e) {
       if (!mounted) return;
-      final msg = e.toString().split('\n').first;
+      final msg = e.toString().split('\n').first.replaceFirst('Exception: ', '');
       ScaffoldMessenger.of(context).showSnackBar(
         SnackBar(
           content: Column(
             mainAxisSize: MainAxisSize.min,
             crossAxisAlignment: CrossAxisAlignment.start,
             children: [
-              Text('Connection error: $msg'),
+              Text('Check-in failed: $msg'),
               const SizedBox(height: 6),
               const Text(
-                'If you tapped Check-In, refresh the dashboard or open Today\'s Attendance — the check-in may have succeeded.',
+                'Tap Refresh to reload. If the server received the request, check Today\'s Attendance.',
                 style: TextStyle(fontSize: 12),
               ),
             ],
           ),
-          duration: const Duration(seconds: 12),
+          duration: const Duration(seconds: 8),
           action: SnackBarAction(
             label: 'Refresh',
-            onPressed: () => _loadMembers(),
-            textColor: _deepBlack,
+            onPressed: () => _loadMembers(append: false),
+            textColor: AppTheme.onSurface,
           ),
         ),
       );
@@ -289,7 +363,7 @@ class _DashboardScreenState extends State<DashboardScreen> {
                   if (mounted) ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text('Error: $e')));
                 }
               },
-              style: FilledButton.styleFrom(backgroundColor: _gold, foregroundColor: _deepBlack),
+              style: FilledButton.styleFrom(backgroundColor: AppTheme.primary, foregroundColor: AppTheme.onPrimary),
               child: const Text('Save'),
             ),
           ],
@@ -314,7 +388,7 @@ class _DashboardScreenState extends State<DashboardScreen> {
             mainAxisSize: MainAxisSize.min,
             crossAxisAlignment: CrossAxisAlignment.stretch,
             children: [
-              Text('Edit PT: ${m.name}', style: const TextStyle(color: _gold, fontSize: 18, fontWeight: FontWeight.bold)),
+              Text('Edit PT: ${m.name}', style: TextStyle(color: AppTheme.primary, fontSize: 18, fontWeight: FontWeight.bold)),
               const SizedBox(height: 16),
               TextField(
                 controller: scheduleController,
@@ -355,7 +429,7 @@ class _DashboardScreenState extends State<DashboardScreen> {
                     }
                   } catch (_) {}
                 },
-                style: FilledButton.styleFrom(backgroundColor: _gold, foregroundColor: _deepBlack),
+                style: FilledButton.styleFrom(backgroundColor: AppTheme.primary, foregroundColor: AppTheme.onPrimary),
                 child: const Text('Save'),
               ),
             ],
@@ -431,7 +505,7 @@ class _DashboardScreenState extends State<DashboardScreen> {
           ),
           IconButton(
             icon: const Icon(Icons.refresh),
-            onPressed: _loading ? null : _loadMembers,
+            onPressed: _loading ? null : () => _loadMembers(append: false),
           ),
           PopupMenuButton<String>(
             icon: const Icon(Icons.more_vert),
@@ -453,17 +527,13 @@ class _DashboardScreenState extends State<DashboardScreen> {
 
   Widget _buildBody(BuildContext context) {
     return _loading
-        ? const Center(
-              child: Column(
-                mainAxisAlignment: MainAxisAlignment.center,
-                children: [
-                  CircularProgressIndicator(color: _gold),
-                  SizedBox(height: 16),
-                  Text('Loading members...', style: TextStyle(color: Colors.grey)),
-                ],
-              ),
-            )
-          : _error != null
+        ? ListView(
+            padding: const EdgeInsets.all(16),
+            children: const [
+              SkeletonMemberList(itemCount: 8),
+            ],
+          )
+        : _error != null
               ? Center(
                   child: Padding(
                     padding: const EdgeInsets.all(24),
@@ -475,50 +545,80 @@ class _DashboardScreenState extends State<DashboardScreen> {
                         Text(_error!, textAlign: TextAlign.center, style: const TextStyle(color: Colors.grey)),
                         const SizedBox(height: 24),
                         FilledButton.icon(
-                          onPressed: _loadMembers,
+                          onPressed: () => _loadMembers(append: false),
                           icon: const Icon(Icons.refresh),
                           label: const Text('Retry'),
-                          style: FilledButton.styleFrom(backgroundColor: _gold, foregroundColor: _deepBlack),
+                          style: FilledButton.styleFrom(backgroundColor: AppTheme.primary, foregroundColor: AppTheme.onPrimary),
                         ),
                       ],
                     ),
                   ),
                 )
-              : _members.isEmpty
+              : _filteredMembers.isEmpty
                   ? Center(
                       child: Column(
                         mainAxisAlignment: MainAxisAlignment.center,
                         children: [
                           Icon(Icons.people_outline, size: 64, color: Colors.grey.shade600),
                           const SizedBox(height: 16),
-                          Text('No members yet', style: TextStyle(color: Colors.grey.shade400, fontSize: 18)),
+                          Text(
+                            widget.searchQuery != null ? 'No members match your search' : 'No members yet',
+                            style: TextStyle(color: Colors.grey.shade400, fontSize: 18),
+                          ),
                           const SizedBox(height: 8),
-                          Text('Register members from the home screen', style: TextStyle(color: Colors.grey.shade600)),
+                          Text(
+                            widget.searchQuery != null ? 'Try a different name' : 'Register members from the home screen',
+                            style: TextStyle(color: Colors.grey.shade600),
+                          ),
                         ],
                       ),
                     )
                   : RefreshIndicator(
                       onRefresh: () {
                         ApiClient.instance.invalidateCache();
-                        return _loadMembers();
+                        return _loadMembers(append: false);
                       },
-                      color: _gold,
+                      color: AppTheme.primary,
                       child: ListView.builder(
-                        padding: const EdgeInsets.all(16),
-                        itemCount: _members.length,
+                        padding: EdgeInsets.all(LayoutConstants.screenPadding(context)),
+                        itemCount: _filteredMembers.length + (_hasMore ? 1 : 0) + (_loadingMore ? 1 : 0),
                         itemBuilder: (context, index) {
-                          final m = _members[index];
+                          if (index >= _filteredMembers.length) {
+                            if (_loadingMore) {
+                              return const Padding(
+                                padding: EdgeInsets.symmetric(vertical: 16),
+                                child: Center(child: SizedBox(width: 24, height: 24, child: CircularProgressIndicator(color: AppTheme.primary, strokeWidth: 2))),
+                              );
+                            }
+                            return Padding(
+                              padding: const EdgeInsets.only(bottom: 16),
+                              child: Center(
+                                child: TextButton.icon(
+                                  onPressed: () => _loadMembers(append: true),
+                                  icon: const Icon(Icons.add_circle_outline, size: 20),
+                                  label: const Text('Load more'),
+                                ),
+                              ),
+                            );
+                          }
+                          final m = _filteredMembers[index];
                           final isActive = m.status.toLowerCase() == 'active';
                           final isCheckingIn = _checkingInIds.contains(m.id);
-                          return RepaintBoundary(
-                            child: Card(
-                            color: isActive ? const Color(0xFF1A1A1A) : const Color(0xFF151515),
+                          final isCheckingOut = _checkingOutIds.contains(m.id);
+                          final radius = LayoutConstants.cardRadius(context);
+                          return FadeInSlide(
+                            child: RepaintBoundary(
+                              child: InkWell(
+                                onTap: widget.onMemberTap != null ? () => widget.onMemberTap!(m) : null,
+                                borderRadius: BorderRadius.circular(radius),
+                                child: Card(
+                            color: AppTheme.surfaceVariant,
                             margin: const EdgeInsets.only(bottom: 12),
                             shape: RoundedRectangleBorder(
-                              borderRadius: BorderRadius.circular(12),
+                              borderRadius: BorderRadius.circular(radius),
                               side: BorderSide(
-                                color: isActive ? _gold : _inactiveGrey,
-                                width: isActive ? 1 : 0.5,
+                                color: isActive ? AppTheme.primary.withOpacity(0.5) : AppTheme.outline,
+                                width: 1,
                               ),
                             ),
                             child: Padding(
@@ -530,10 +630,16 @@ class _DashboardScreenState extends State<DashboardScreen> {
                                     crossAxisAlignment: CrossAxisAlignment.start,
                                     children: [
                                       CircleAvatar(
-                                        backgroundColor: _gold,
-                                        foregroundColor: _deepBlack,
                                         radius: 22,
-                                        child: Text((m.name.isNotEmpty ? m.name[0] : '?').toUpperCase(), style: const TextStyle(fontWeight: FontWeight.bold, fontSize: 16)),
+                                        backgroundColor: AppTheme.primary.withOpacity(0.2),
+                                        foregroundColor: AppTheme.primary,
+                                        backgroundImage: m.photoBase64 != null
+                                            ? MemoryImage(base64Decode(m.photoBase64!))
+                                            : null,
+                                        onBackgroundImageError: m.photoBase64 != null ? (_, __) {} : null,
+                                        child: m.photoBase64 == null
+                                            ? Text((m.name.isNotEmpty ? m.name[0] : '?').toUpperCase(), style: TextStyle(fontWeight: FontWeight.bold, fontSize: 16, color: AppTheme.primary))
+                                            : null,
                                       ),
                                       const SizedBox(width: 12),
                                       Expanded(
@@ -546,7 +652,7 @@ class _DashboardScreenState extends State<DashboardScreen> {
                                                   width: 8,
                                                   height: 8,
                                                   decoration: BoxDecoration(
-                                                    color: isActive ? _activeGreen : _inactiveGrey,
+                                                    color: isActive ? AppTheme.success : Colors.grey.shade400,
                                                     shape: BoxShape.circle,
                                                   ),
                                                 ),
@@ -554,7 +660,7 @@ class _DashboardScreenState extends State<DashboardScreen> {
                                                 Expanded(
                                                   child: Text(
                                                     m.name,
-                                                    style: const TextStyle(color: Colors.white, fontWeight: FontWeight.w600, fontSize: 15),
+                                                    style: TextStyle(color: AppTheme.onSurface, fontWeight: FontWeight.w600, fontSize: 15),
                                                     overflow: TextOverflow.ellipsis,
                                                     maxLines: 1,
                                                   ),
@@ -564,13 +670,13 @@ class _DashboardScreenState extends State<DashboardScreen> {
                                             const SizedBox(height: 4),
                                             Text(
                                               m.email,
-                                              style: TextStyle(color: Colors.grey.shade400, fontSize: 12),
+                                              style: TextStyle(color: Colors.grey.shade600, fontSize: 12),
                                               overflow: TextOverflow.ellipsis,
                                               maxLines: 1,
                                             ),
                                             Text(
                                               m.phone,
-                                              style: TextStyle(color: Colors.grey.shade400, fontSize: 12),
+                                              style: TextStyle(color: Colors.grey.shade600, fontSize: 12),
                                               overflow: TextOverflow.ellipsis,
                                               maxLines: 1,
                                             ),
@@ -579,9 +685,9 @@ class _DashboardScreenState extends State<DashboardScreen> {
                                               spacing: 6,
                                               runSpacing: 4,
                                               children: [
-                                                _chip(m.membershipType, _gold),
-                                                _chip(m.batch, Colors.grey.shade700),
-                                                _chip(m.status, isActive ? _activeGreen : _inactiveGrey),
+                                                _chip(m.membershipType, AppTheme.primary),
+                                                _chip(m.batch, Colors.grey.shade600),
+                                                _chip(m.status, isActive ? AppTheme.success : Colors.grey),
                                               ],
                                             ),
                                           ],
@@ -595,21 +701,33 @@ class _DashboardScreenState extends State<DashboardScreen> {
                                     children: [
                                       TextButton(
                                         onPressed: () => _showMemberEditDialog(context, m),
-                                        style: TextButton.styleFrom(minimumSize: Size.zero, padding: const EdgeInsets.symmetric(horizontal: 12)),
+                                        style: TextButton.styleFrom(minimumSize: Size.zero, padding: const EdgeInsets.symmetric(horizontal: 12), foregroundColor: AppTheme.onSurface),
                                         child: const Text('Edit'),
                                       ),
                                       if (m.membershipType.toLowerCase() == 'pt')
                                         TextButton(
                                           onPressed: () => _showPTEditSheet(context, m),
-                                          style: TextButton.styleFrom(minimumSize: Size.zero, padding: const EdgeInsets.symmetric(horizontal: 8)),
+                                          style: TextButton.styleFrom(minimumSize: Size.zero, padding: const EdgeInsets.symmetric(horizontal: 8), foregroundColor: AppTheme.primary),
                                           child: const Text('PT'),
                                         ),
-                                      const SizedBox(width: 8),
+                                      OutlinedButton(
+                                        onPressed: (isCheckingOut || !isActive) ? null : () => _checkOut(m),
+                                        style: OutlinedButton.styleFrom(
+                                          foregroundColor: AppTheme.primary,
+                                          side: const BorderSide(color: AppTheme.primary),
+                                          padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 8),
+                                          minimumSize: Size.zero,
+                                        ),
+                                        child: isCheckingOut
+                                            ? SizedBox(width: 16, height: 16, child: CircularProgressIndicator(strokeWidth: 2, color: AppTheme.primary))
+                                            : const Text('Check-Out'),
+                                      ),
+                                      const SizedBox(width: 6),
                                       FilledButton(
                                         onPressed: isCheckingIn ? null : () => _checkIn(m),
                                         style: FilledButton.styleFrom(
-                                          backgroundColor: _gold,
-                                          foregroundColor: _deepBlack,
+                                          backgroundColor: AppTheme.primary,
+                                          foregroundColor: AppTheme.onPrimary,
                                           padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 10),
                                           minimumSize: Size.zero,
                                         ),
@@ -617,7 +735,7 @@ class _DashboardScreenState extends State<DashboardScreen> {
                                             ? const SizedBox(
                                                 width: 18,
                                                 height: 18,
-                                                child: CircularProgressIndicator(strokeWidth: 2, color: _deepBlack),
+                                                child: CircularProgressIndicator(strokeWidth: 2, color: AppTheme.onPrimary),
                                               )
                                             : const Text('Check-In'),
                                       ),
@@ -626,9 +744,11 @@ class _DashboardScreenState extends State<DashboardScreen> {
                                 ],
                               ),
                             ),
+                            ),
                           ),
-                          );
-                        },
+                        ),
+                        );
+                        },  // itemBuilder
                       ),
                     );
   }

@@ -1,12 +1,19 @@
 """
-Simulated notifications for Jupiter Arena.
-Prints to console: [WHATSAPP SENT to {phone}]: {message}
+Simulated notifications for Jupiter Arena (utils).
+
+In production you would replace this with real WhatsApp Business API, email (SendGrid, etc.),
+or SMS. For now, all notifications are printed to the backend console so you can verify
+the flow when testing registration, payment received, fee reminders, or status change.
+
+Usage: from utils import send_notification
+  send_notification("registration", {"name": "John", "phone": "9999999999", "email": "j@x.com"})
+  send_notification("payment_received", user, {"amount": 500})
 """
 
 
 def send_notification(notification_type: str, user: dict, extra: dict | None = None):
     """
-    Simulated WhatsApp/Email. Prints to console.
+    Simulated WhatsApp/Email: prints to console.
     user: dict with at least 'phone', 'name'; optionally 'email'.
     notification_type: 'registration' | 'payment_received' | 'fees_due' | 'status_change'
     extra: e.g. {'amount': 500} for payment, {'new_status': 'Inactive'} for status.

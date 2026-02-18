@@ -1,3 +1,19 @@
+"""
+Jupiter Arena Gym API – Backend for GymSaaS.
+
+This FastAPI application provides REST endpoints for:
+- Member CRUD and lookup (by id or phone for member login)
+- Attendance: check-in/check-out (IST), daily and date-range reports
+- Payments: registration + monthly fees (₹500 Regular / ₹2000 PT), log monthly with date
+- Billing: walk-in (new member + first invoice), invoice history, mark paid
+- Analytics: dashboard counts (active/inactive, today's check-ins, etc.)
+- Export: members, payments, billing to Excel
+
+All timestamps and "today" are in Asia/Kolkata (IST). MongoDB collections:
+gym_members, attendance_logs, payments, invoices.
+"""
+
+import os
 from contextlib import asynccontextmanager
 from datetime import datetime, date, timedelta
 from enum import Enum
@@ -10,15 +26,18 @@ from fastapi.responses import StreamingResponse
 from motor.motor_asyncio import AsyncIOMotorClient
 from pydantic import BaseModel, EmailStr, Field, field_serializer
 
-# MongoDB connection
-MONGODB_URL = "mongodb+srv://gym_admin:8qxXOYKp1El0bw0B@clustergymadmin.zkcgd9b.mongodb.net/?appName=Clustergymadmin"
-DATABASE_NAME = "gym_db"
+# ---------------------------------------------------------------------------
+# Configuration & database
+# ---------------------------------------------------------------------------
+# MongoDB: use MONGODB_URL env in production to avoid credentials in source
+MONGODB_URL = os.environ.get("MONGODB_URL", "mongodb+srv://gym_admin:8qxXOYKp1El0bw0B@clustergymadmin.zkcgd9b.mongodb.net/?appName=Clustergymadmin")
+DATABASE_NAME = os.environ.get("DATABASE_NAME", "gym_db")
 COLLECTION_MEMBERS = "gym_members"
 COLLECTION_ATTENDANCE = "attendance_logs"
 COLLECTION_PAYMENTS = "payments"
 COLLECTION_INVOICES = "invoices"
 
-# Fee model: ₹1000 registration + Monthly (₹500 Regular / ₹2000 PT)
+# Fee constants (used for registration, monthly dues, walk-in first bill)
 REGISTRATION_FEE = 1000
 MONTHLY_FEE_REGULAR = 500
 MONTHLY_FEE_PT = 2000
@@ -32,6 +51,12 @@ attendance_collection = db[COLLECTION_ATTENDANCE]
 payments_collection = db[COLLECTION_PAYMENTS]
 invoices_collection = db[COLLECTION_INVOICES]
 
+
+# ---------------------------------------------------------------------------
+# Time helpers (all business logic uses IST)
+# ---------------------------------------------------------------------------
+
+# ---------- Time helpers (all business logic uses IST) ----------
 
 def now_ist() -> datetime:
     """Current datetime in IST."""
@@ -53,9 +78,13 @@ def batch_from_ist(dt: datetime) -> str:
     return "Evening"  # 0-3, 12-16
 
 
+# ---------------------------------------------------------------------------
+# App lifecycle: auto-mark inactive members who haven't visited in 90 days
+# ---------------------------------------------------------------------------
+
 @asynccontextmanager
 async def lifespan(app: FastAPI):
-    """On startup: run 90-day attendance auto-cancellation."""
+    """On startup: mark members as Inactive if last_attendance_date is older than 90 days (IST)."""
     from datetime import timezone
     today = today_ist()
     cutoff = today - timedelta(days=90)
@@ -71,6 +100,7 @@ async def lifespan(app: FastAPI):
 
 app = FastAPI(title="Gym API", lifespan=lifespan)
 
+# CORS: allow Flutter web (varying ports) and mobile to call this API
 app.add_middleware(
     CORSMiddleware,
     allow_origins=["*"],  # Allow all origins for local dev (Flutter web uses varying ports)
@@ -79,6 +109,10 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
+
+# ---------------------------------------------------------------------------
+# Pydantic models (request/response shapes for API)
+# ---------------------------------------------------------------------------
 
 class MembershipType(str, Enum):
     regular = "Regular"
@@ -98,6 +132,8 @@ class MemberCreate(BaseModel):
     membership_type: MembershipType
     batch: Batch
     status: str = Field(default="Active", max_length=50)
+    photo_base64: str | None = None  # optional member photo (JPEG/PNG base64)
+    id_document_base64: str | None = None  # optional ID document (PDF/image base64)
 
 
 class MemberResponse(BaseModel):
@@ -112,6 +148,8 @@ class MemberResponse(BaseModel):
     last_attendance_date: date | None = None
     workout_schedule: str | None = None
     diet_chart: str | None = None
+    photo_base64: str | None = None
+    id_document_base64: str | None = None
 
 
 class MemberPTUpdate(BaseModel):
@@ -169,13 +207,19 @@ class AttendanceRecord(BaseModel):
     id: str
     member_id: str
     member_name: str
+    member_phone: str | None = None
     check_in_at: datetime  # IST, for display
     date_ist: str
     batch: str
+    check_out_at: datetime | None = None  # IST, when member checked out
 
     @field_serializer("check_in_at")
     def serialize_check_in_at(self, dt: datetime) -> str:
         return dt.isoformat()
+
+    @field_serializer("check_out_at")
+    def serialize_check_out_at(self, dt: datetime | None) -> str | None:
+        return dt.isoformat() if dt else None
 
 
 # ---------- Notifications (utils.send_notification) ----------
@@ -192,15 +236,32 @@ def _notify_status_change(name: str, new_status: str, email: str, phone: str):
     send_notification("status_change", {"name": name, "phone": phone, "email": email}, {"new_status": new_status})
 
 
+# Minimum app version the backend supports (app should prompt update if below this).
+MIN_APP_VERSION = "1.0.0"
+
+# Optional: max check-ins per batch per day (None = no limit). Set e.g. {"Morning": 30, "Evening": 30, "Ladies": 20}.
+BATCH_CAPACITY = None  # or {"Morning": 30, "Evening": 30, "Ladies": 20}
+
+
 @app.get("/")
 def root():
     return {"status": "success", "message": "Gym API is Live!"}
 
 
+@app.get("/version")
+def version():
+    """App can check this to prompt user to update if current version < min_app_version."""
+    return {"min_app_version": MIN_APP_VERSION, "api_version": "1"}
+
+
+# ---------- Members: CRUD, lookup, attendance stats ----------
+
 @app.post("/members", response_model=MemberResponse)
 async def create_member(member: MemberCreate):
     from datetime import timezone
     doc = member.model_dump()
+    # Normalize phone for consistent lookup (member login uses by-phone)
+    doc["phone"] = (doc.get("phone") or "").strip()
     doc["created_at"] = datetime.now(timezone.utc)
     mt = doc["membership_type"].value if isinstance(doc["membership_type"], MembershipType) else doc["membership_type"]
     doc["workout_schedule"] = doc.get("workout_schedule")
@@ -232,37 +293,88 @@ async def create_member(member: MemberCreate):
         last_attendance_date=doc.get("last_attendance_date"),
         workout_schedule=doc.get("workout_schedule"),
         diet_chart=doc.get("diet_chart"),
+        photo_base64=doc.get("photo_base64"),
+        id_document_base64=doc.get("id_document_base64"),
     )
+
+
+@app.get("/members/{member_id}", response_model=MemberResponse)
+async def get_member_by_id(member_id: str):
+    """Get a single member by ID."""
+    from bson import ObjectId
+    try:
+        oid = ObjectId(member_id)
+    except Exception:
+        raise HTTPException(status_code=400, detail="Invalid member ID")
+    doc = await members_collection.find_one({"_id": oid})
+    if not doc:
+        raise HTTPException(status_code=404, detail="Member not found")
+    return _doc_to_member_response(doc)
+
+
+@app.get("/members/{member_id}/attendance-stats")
+async def member_attendance_stats(member_id: str):
+    """Total visits, visits this month, and avg workout duration (minutes) for a member."""
+    from bson import ObjectId
+    try:
+        oid = ObjectId(member_id)
+    except Exception:
+        raise HTTPException(status_code=400, detail="Invalid member ID")
+    if await members_collection.find_one({"_id": oid}) is None:
+        raise HTTPException(status_code=404, detail="Member not found")
+    total_visits = await attendance_collection.count_documents({"member_id": member_id})
+    today = today_ist()
+    month_start = today.replace(day=1).strftime("%Y-%m-%d")
+    month_end = today.strftime("%Y-%m-%d")
+    visits_this_month = await attendance_collection.count_documents({
+        "member_id": member_id,
+        "date_ist": {"$gte": month_start, "$lte": month_end},
+    })
+    cursor = attendance_collection.find(
+        {"member_id": member_id, "check_out_at_utc": {"$exists": True, "$ne": None}}
+    )
+    durations_min = []
+    async for doc in cursor:
+        try:
+            ci = doc.get("check_in_at_utc") or datetime.fromisoformat(doc.get("check_in_at_ist", ""))
+            co = doc.get("check_out_at_utc") or datetime.fromisoformat(doc.get("check_out_at_ist", ""))
+            if hasattr(ci, "timestamp") and hasattr(co, "timestamp"):
+                durations_min.append((co - ci).total_seconds() / 60)
+        except Exception:
+            pass
+    avg_duration_minutes = round(sum(durations_min) / len(durations_min), 1) if durations_min else None
+    return {
+        "total_visits": total_visits,
+        "visits_this_month": visits_this_month,
+        "avg_duration_minutes": avg_duration_minutes,
+    }
 
 
 @app.get("/members/by-phone/{phone}", response_model=MemberResponse)
 async def get_member_by_phone(phone: str):
-    """For member login: lookup by phone."""
-    doc = await members_collection.find_one({"phone": phone})
+    """For member login: lookup by phone. Phone is normalized (stripped) for lookup."""
+    phone_normalized = phone.strip() if phone else ""
+    if not phone_normalized:
+        raise HTTPException(status_code=400, detail="Phone required")
+    doc = await members_collection.find_one({"phone": phone_normalized})
+    if not doc:
+        # Try with original in case DB has different formatting
+        doc = await members_collection.find_one({"phone": phone})
     if not doc:
         raise HTTPException(status_code=404, detail="Member not found")
     return _doc_to_member_response(doc)
 
 
 @app.get("/members", response_model=list[MemberResponse])
-async def list_members():
-    cursor = members_collection.find().sort("created_at", -1)
+async def list_members(skip: int = 0, limit: int = 100, brief: bool = False):
+    """List members. brief=True omits photo_base64 and id_document_base64 for faster list load. Use skip/limit for pagination."""
+    skip = max(0, skip)
+    limit = min(max(1, limit), 500)  # Cap at 500 for performance/security
+    cursor = members_collection.find().sort("created_at", -1).skip(skip).limit(limit)
     members = []
     async for doc in cursor:
         members.append(
-            MemberResponse(
-                id=str(doc["_id"]),
-                name=doc["name"],
-                phone=doc["phone"],
-                email=doc["email"],
-                membership_type=doc["membership_type"] if isinstance(doc["membership_type"], str) else doc["membership_type"].value,
-                batch=doc["batch"] if isinstance(doc["batch"], str) else doc["batch"].value,
-                status=doc.get("status", "Active"),
-                created_at=doc["created_at"],
-                last_attendance_date=_to_date(doc.get("last_attendance_date")),
-                workout_schedule=doc.get("workout_schedule"),
-                diet_chart=doc.get("diet_chart"),
-            )
+            _doc_to_member_response(doc, include_photos=not brief)
         )
     return members
 
@@ -307,19 +419,21 @@ async def update_member(member_id: str, body: MemberUpdate):
     return _doc_to_member_response(result)
 
 
-def _doc_to_member_response(doc) -> MemberResponse:
+def _doc_to_member_response(doc, include_photos: bool = True) -> MemberResponse:
     return MemberResponse(
-        id=str(doc["_id"]),
-        name=doc["name"],
-        phone=doc["phone"],
-        email=doc["email"],
-        membership_type=doc["membership_type"] if isinstance(doc["membership_type"], str) else doc["membership_type"].value,
-        batch=doc["batch"] if isinstance(doc["batch"], str) else doc["batch"].value,
-        status=doc.get("status", "Active"),
-        created_at=doc["created_at"],
+                id=str(doc["_id"]),
+                name=doc["name"],
+                phone=doc["phone"],
+                email=doc["email"],
+                membership_type=doc["membership_type"] if isinstance(doc["membership_type"], str) else doc["membership_type"].value,
+                batch=doc["batch"] if isinstance(doc["batch"], str) else doc["batch"].value,
+                status=doc.get("status", "Active"),
+                created_at=doc["created_at"],
         last_attendance_date=_to_date(doc.get("last_attendance_date")),
         workout_schedule=doc.get("workout_schedule"),
         diet_chart=doc.get("diet_chart"),
+        photo_base64=doc.get("photo_base64") if include_photos else None,
+        id_document_base64=doc.get("id_document_base64") if include_photos else None,
     )
 
 
@@ -332,6 +446,8 @@ def _to_date(v):
 
 # ---------- Attendance ----------
 
+
+# ---------- Attendance: check-in/check-out (IST), by date, summary ----------
 
 @app.post("/attendance/check-in/{member_id}", response_model=AttendanceRecord)
 async def check_in(member_id: str):
@@ -362,6 +478,17 @@ async def check_in(member_id: str):
                 detail="Already checked in today. One check-in per day allowed.",
             )
 
+        if BATCH_CAPACITY and batch in BATCH_CAPACITY:
+            cap = BATCH_CAPACITY[batch]
+            count_today_batch = await attendance_collection.count_documents(
+                {"date_ist": date_ist_str, "batch": batch}
+            )
+            if count_today_batch >= cap:
+                raise HTTPException(
+                    status_code=400,
+                    detail=f"Batch full. {batch} batch has reached capacity ({cap}). Try another batch.",
+                )
+
         check_in_at_utc = now.astimezone(timezone.utc)
         doc = {
             "member_id": member_id,
@@ -370,6 +497,7 @@ async def check_in(member_id: str):
             "date_ist": date_ist_str,
             "batch": batch,
             "member_name": member.get("name", ""),
+            "member_phone": member.get("phone"),
         }
         result = await attendance_collection.insert_one(doc)
         # Store as datetime at midnight UTC so MongoDB (BSON) can encode it
@@ -384,9 +512,11 @@ async def check_in(member_id: str):
             id=str(result.inserted_id),
             member_id=member_id,
             member_name=doc["member_name"],
+            member_phone=doc.get("member_phone"),
             check_in_at=now,
             date_ist=date_ist_str,
             batch=batch,
+            check_out_at=None,
         )
     except HTTPException:
         raise
@@ -404,17 +534,53 @@ async def _attendance_docs_to_records(cursor) -> list:
             check_in_at_ist = check_in_at_ist.replace(tzinfo=IST)
         elif hasattr(check_in_at_ist, "astimezone"):
             check_in_at_ist = check_in_at_ist.astimezone(IST)
+        check_out_at = None
+        if doc.get("check_out_at_ist"):
+            try:
+                check_out_at = datetime.fromisoformat(doc["check_out_at_ist"])
+                if check_out_at.tzinfo is None:
+                    check_out_at = check_out_at.replace(tzinfo=IST)
+                else:
+                    check_out_at = check_out_at.astimezone(IST)
+            except Exception:
+                pass
         out.append(
             AttendanceRecord(
                 id=str(doc["_id"]),
                 member_id=doc["member_id"],
                 member_name=doc.get("member_name", ""),
+                member_phone=doc.get("member_phone"),
                 check_in_at=check_in_at_ist,
                 date_ist=doc["date_ist"],
                 batch=doc["batch"],
+                check_out_at=check_out_at,
             )
         )
     return out
+
+
+@app.get("/attendance/summary")
+async def attendance_summary():
+    """Today's check-ins, currently in gym, this week count, average daily (for dashboard cards)."""
+    from datetime import timedelta
+    date_ist_str = today_ist().strftime("%Y-%m-%d")
+    today_count = await attendance_collection.count_documents({"date_ist": date_ist_str})
+    today_check_outs = await attendance_collection.count_documents({
+        "date_ist": date_ist_str,
+        "check_out_at_ist": {"$exists": True, "$ne": None, "$ne": ""},
+    })
+    currently_in = today_count - today_check_outs
+    week_start = (today_ist() - timedelta(days=6)).strftime("%Y-%m-%d")
+    this_week = await attendance_collection.count_documents({
+        "date_ist": {"$gte": week_start, "$lte": date_ist_str},
+    })
+    average_daily = round(this_week / 7.0, 1) if this_week else 0
+    return {
+        "today_check_ins": today_count,
+        "currently_in_gym": currently_in,
+        "this_week": this_week,
+        "average_daily": average_daily,
+    }
 
 
 @app.get("/attendance/today", response_model=list[AttendanceRecord])
@@ -430,6 +596,56 @@ async def attendance_by_date_endpoint(date: str):
     if len(date) != 10 or date[4] != "-" or date[7] != "-":
         raise HTTPException(status_code=400, detail="date must be YYYY-MM-DD")
     return await attendance_by_date(date)
+
+
+@app.get("/attendance/by-date-range", response_model=list[AttendanceRecord])
+async def attendance_by_date_range(date_from: str, date_to: str):
+    """All check-ins in date range (YYYY-MM-DD). For daily/monthly/historical view."""
+    if len(date_from) != 10 or date_from[4] != "-" or date_from[7] != "-" or len(date_to) != 10 or date_to[4] != "-" or date_to[7] != "-":
+        raise HTTPException(status_code=400, detail="date_from and date_to must be YYYY-MM-DD")
+    if date_from > date_to:
+        raise HTTPException(status_code=400, detail="date_from must be <= date_to")
+    cursor = attendance_collection.find(
+        {"date_ist": {"$gte": date_from, "$lte": date_to}}
+    ).sort([("date_ist", 1), ("batch", 1), ("check_in_at_utc", 1)])
+    return await _attendance_docs_to_records(cursor)
+
+
+@app.post("/attendance/check-out/{member_id}", response_model=AttendanceRecord)
+async def check_out(member_id: str):
+    """Record check-out for today's check-in (IST)."""
+    from bson import ObjectId
+    from datetime import timezone
+    try:
+        oid = ObjectId(member_id)
+    except Exception:
+        raise HTTPException(status_code=400, detail="Invalid member ID")
+    member = await members_collection.find_one({"_id": oid})
+    if not member:
+        raise HTTPException(status_code=404, detail="Member not found")
+    date_ist_str = today_ist().strftime("%Y-%m-%d")
+    doc = await attendance_collection.find_one({"member_id": member_id, "date_ist": date_ist_str})
+    if not doc:
+        raise HTTPException(status_code=400, detail="No check-in found for today. Check in first.")
+    if doc.get("check_out_at_ist"):
+        raise HTTPException(status_code=400, detail="Already checked out today.")
+    now = now_ist()
+    check_out_utc = now.astimezone(timezone.utc)
+    await attendance_collection.update_one(
+        {"_id": doc["_id"]},
+        {"$set": {"check_out_at_ist": now.isoformat(), "check_out_at_utc": check_out_utc}},
+    )
+    updated = await attendance_collection.find_one({"_id": doc["_id"]})
+    # Build record from single doc (cursor helper expects async iterable)
+    records = await _attendance_docs_to_records(
+        _async_iter([updated])
+    )
+    return records[0]
+
+
+async def _async_iter(items):
+    for x in items:
+        yield x
 
 
 async def attendance_by_date(date_ist_str: str) -> list:
@@ -474,16 +690,19 @@ async def mark_inactive_by_attendance():
 
 # ---------- Payments & Fees ----------
 
+# ---------- Payments: list, fees summary, log monthly, mark paid ----------
+
 @app.get("/payments", response_model=list[PaymentResponse])
-async def list_payments(member_id: str | None = None, status: str | None = None):
-    """List payments. Filter by member_id and/or status (Paid/Due/Overdue)."""
+async def list_payments(member_id: str | None = None, status: str | None = None, limit: int = 1000):
+    """List payments. Filter by member_id and/or status (Paid/Due/Overdue). Capped at 1000 for performance."""
     from datetime import timezone
     q = {}
     if member_id:
         q["member_id"] = member_id
     if status:
         q["status"] = status
-    cursor = payments_collection.find(q).sort("created_at", -1)
+    limit = min(max(1, limit), 1000)
+    cursor = payments_collection.find(q).sort("created_at", -1).limit(limit)
     out = []
     async for doc in cursor:
         out.append(PaymentResponse(
@@ -550,6 +769,60 @@ async def fees_summary():
 class PaymentStatusUpdate(BaseModel):
     """Admin: correct payment status (e.g. revert to unpaid)."""
     status: str = Field(..., pattern="^(Paid|Due|Overdue)$")
+
+
+class LogMonthlyPaymentBody(BaseModel):
+    """Log a monthly payment for an existing member (Rs 500 Regular / Rs 2000 PT)."""
+    member_id: str
+    period: str  # YYYY-MM
+    amount: int  # 500 or 2000
+    payment_date: str | None = None  # YYYY-MM-DD, default today IST
+
+
+@app.post("/payments/log-monthly", response_model=PaymentResponse)
+async def log_monthly_payment(body: LogMonthlyPaymentBody):
+    """Create a monthly payment record marked as Paid (for existing member payment logging)."""
+    from bson import ObjectId
+    from datetime import timezone
+    try:
+        oid = ObjectId(body.member_id)
+    except Exception:
+        raise HTTPException(status_code=400, detail="Invalid member ID")
+    member = await members_collection.find_one({"_id": oid})
+    if not member:
+        raise HTTPException(status_code=404, detail="Member not found")
+    if body.amount not in (500, 2000):
+        raise HTTPException(status_code=400, detail="Amount must be 500 (Regular) or 2000 (PT)")
+    pay_date_str = body.payment_date or today_ist().strftime("%Y-%m-%d")
+    try:
+        pay_date = datetime.strptime(pay_date_str + " 12:00:00", "%Y-%m-%d %H:%M:%S").replace(tzinfo=timezone.utc)
+    except Exception:
+        raise HTTPException(status_code=400, detail="payment_date must be YYYY-MM-DD")
+    doc = {
+        "member_id": body.member_id,
+        "member_name": member.get("name", ""),
+        "amount": body.amount,
+        "fee_type": "monthly",
+        "period": body.period,
+        "status": "Paid",
+        "due_date": pay_date,
+        "paid_at": pay_date,
+        "created_at": datetime.now(timezone.utc),
+    }
+    result = await payments_collection.insert_one(doc)
+    doc["_id"] = result.inserted_id
+    return PaymentResponse(
+        id=str(doc["_id"]),
+        member_id=doc["member_id"],
+        member_name=doc["member_name"],
+        amount=doc["amount"],
+        fee_type=doc["fee_type"],
+        period=doc["period"],
+        status=doc["status"],
+        due_date=_to_date(doc.get("due_date")),
+        paid_at=doc.get("paid_at"),
+        created_at=doc["created_at"],
+    )
 
 
 @app.patch("/payments/{payment_id}", response_model=PaymentResponse)
@@ -619,6 +892,8 @@ async def record_payment(member_id: str, payment_id: str, background_tasks: Back
     )
 
 
+# ---------- Analytics: dashboard counts, fee reminders, admin helpers ----------
+
 @app.get("/analytics/dashboard")
 async def analytics_dashboard(date_from: str | None = None, date_to: str | None = None):
     """
@@ -642,6 +917,13 @@ async def analytics_dashboard(date_from: str | None = None, date_to: str | None 
     async for row in cur2:
         total_collections = row["total"]
         break
+    date_ist_str = today_ist().strftime("%Y-%m-%d")
+    today_attendance_count = await attendance_collection.count_documents({"date_ist": date_ist_str})
+    today_check_outs = await attendance_collection.count_documents({
+        "date_ist": date_ist_str,
+        "check_out_at_ist": {"$exists": True, "$ne": None, "$ne": ""},
+    })
+    today_currently_in = today_attendance_count - today_check_outs
     out = {
         "active_members": active,
         "inactive_members": inactive,
@@ -649,6 +931,10 @@ async def analytics_dashboard(date_from: str | None = None, date_to: str | None 
         "pt_count": pt,
         "pending_fees_amount": pending_fees,
         "total_collections": total_collections,
+        "today_attendance_count": today_attendance_count,
+        "today_check_ins": today_attendance_count,
+        "today_check_outs": today_check_outs,
+        "today_currently_in": today_currently_in,
     }
     if date_from and date_to:
         if len(date_from) != 10 or date_from[4] != "-" or date_from[7] != "-" or len(date_to) != 10 or date_to[4] != "-" or date_to[7] != "-":
@@ -758,6 +1044,8 @@ class BillingIssueWalkIn(BaseModel):
     batch: Batch
 
 
+# ---------- Billing: walk-in (new member + first bill), history, mark paid ----------
+
 @app.post("/billing/issue", response_model=InvoiceResponse)
 async def billing_issue(body: BillingIssueWalkIn):
     """Walk-in flow: create member and issue first bill (Registration + 1st Month)."""
@@ -811,9 +1099,43 @@ async def billing_issue(body: BillingIssueWalkIn):
 
 
 @app.get("/billing/history", response_model=list[InvoiceResponse])
-async def billing_history(member_id: str | None = None):
-    """List invoices. Optional filter by member_id."""
-    q = {} if member_id is None else {"member_id": member_id}
+async def billing_history(
+    member_id: str | None = None,
+    search: str | None = None,
+    date_from: str | None = None,
+    date_to: str | None = None,
+):
+    """List invoices. Optional: member_id, search (invoice id or member name), date_from, date_to (YYYY-MM-DD)."""
+    q = {}
+    if member_id:
+        q["member_id"] = member_id
+    if search and search.strip():
+        from bson.regex import Regex
+        from bson import ObjectId
+        s = search.strip()
+        or_clauses = [{"member_name": Regex(s, "i")}]
+        try:
+            or_clauses.append({"_id": ObjectId(s)})
+        except Exception:
+            pass
+        q["$or"] = or_clauses
+    if date_from and len(date_from) == 10 and date_from[4] == "-" and date_from[7] == "-":
+        from datetime import timezone
+        start = datetime.strptime(date_from + " 00:00:00", "%Y-%m-%d %H:%M:%S").replace(tzinfo=timezone.utc)
+        q.setdefault("issued_at", {})
+        if isinstance(q["issued_at"], dict):
+            q["issued_at"]["$gte"] = start
+        else:
+            q["issued_at"] = {"$gte": start}
+    if date_to and len(date_to) == 10 and date_to[4] == "-" and date_to[7] == "-":
+        from datetime import timezone
+        end = datetime.strptime(date_to + " 23:59:59", "%Y-%m-%d %H:%M:%S").replace(tzinfo=timezone.utc)
+        if "issued_at" not in q:
+            q["issued_at"] = {}
+        if isinstance(q["issued_at"], dict):
+            q["issued_at"]["$lte"] = end
+        else:
+            q["issued_at"] = {"$lte": end}
     cursor = invoices_collection.find(q).sort("issued_at", -1)
     out = []
     async for doc in cursor:
@@ -862,6 +1184,8 @@ async def billing_pay(invoice_id: str, background_tasks: BackgroundTasks):
     )
 
 
+# ---------- Export to Excel (billing, members, payments) ----------
+
 @app.get("/export/billing")
 async def export_billing_excel():
     """Export billing/invoices to Excel."""
@@ -882,10 +1206,8 @@ async def export_billing_excel():
     buf = BytesIO()
     df.to_excel(buf, index=False, engine="openpyxl")
     buf.seek(0)
-    return StreamingResponse(buf, media_type="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet", headers={"Content-Disposition": "attachment; filename=billing_history.xlsx"})
+    return StreamingResponse(buf, media_type="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet", headers={"Content-Disposition": "attachment; filename=billing_history.xlsx"}    )
 
-
-# ---------- Export to Excel ----------
 
 @app.get("/export/members")
 async def export_members_excel():

@@ -1,12 +1,17 @@
+// ---------------------------------------------------------------------------
+// Admin login – phone + OTP; stores admin phone/PIN in secure storage.
+// ---------------------------------------------------------------------------
+// Used when app is configured to show separate admin vs member login.
+// On success navigates to [AdminDashboardScreen].
+// ---------------------------------------------------------------------------
+
 import 'package:flutter/material.dart';
 import 'package:google_fonts/google_fonts.dart';
-import 'package:shared_preferences/shared_preferences.dart';
 
+import '../core/secure_storage.dart';
 import '../theme/app_theme.dart';
 import 'admin_dashboard_screen.dart';
 
-const _padding = 20.0;
-const _adminPhoneKey = 'admin_phone';
 
 class AdminLoginScreen extends StatefulWidget {
   const AdminLoginScreen({super.key});
@@ -55,8 +60,7 @@ class _AdminLoginScreenState extends State<AdminLoginScreen> {
     await Future.delayed(const Duration(milliseconds: 400));
     if (!mounted) return;
 
-    final prefs = await SharedPreferences.getInstance();
-    final savedAdmin = prefs.getString(_adminPhoneKey);
+    final savedAdmin = await SecureStorage.getAdminPhone();
 
     if (savedAdmin != null && savedAdmin != phone) {
       setState(() {
@@ -67,7 +71,7 @@ class _AdminLoginScreenState extends State<AdminLoginScreen> {
     }
 
     if (savedAdmin == null) {
-      await prefs.setString(_adminPhoneKey, phone);
+      await SecureStorage.setAdminPhone(phone);
       if (mounted) {
         ScaffoldMessenger.of(context).showSnackBar(
           const SnackBar(content: Text('Owner phone saved. You have full admin access.')),
@@ -94,7 +98,7 @@ class _AdminLoginScreenState extends State<AdminLoginScreen> {
       ),
       body: SafeArea(
         child: SingleChildScrollView(
-          padding: const EdgeInsets.all(_padding),
+          padding: EdgeInsets.all(LayoutConstants.screenPadding(context)),
           child: Column(
             crossAxisAlignment: CrossAxisAlignment.stretch,
             children: [

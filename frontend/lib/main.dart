@@ -1,25 +1,53 @@
+// ---------------------------------------------------------------------------
+// Jupiter Arena – Flutter app entry and shell.
+// ---------------------------------------------------------------------------
+// This file: (1) initializes the app and date formatting, (2) holds [MyApp]
+// for theme (light/dark) and [MyHomePage] which decides the initial route:
+// Login, Admin Dashboard, or Member Home based on stored role/phone.
+// Theme preference is persisted via [SecureStorage]; server URL via SharedPreferences.
+// ---------------------------------------------------------------------------
+
 import 'dart:convert';
 
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
+import 'package:intl/date_symbol_data_local.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 
 import 'core/api_client.dart';
+import 'core/app_constants.dart';
+import 'core/secure_storage.dart';
 import 'theme/app_theme.dart';
-import 'screens/admin_dashboard_screen.dart';
-import 'screens/admin_login_screen.dart';
-import 'screens/attendance_report_screen.dart';
-import 'screens/dashboard_screen.dart';
-import 'screens/member_login_screen.dart';
-import 'screens/registration_screen.dart';
+import 'screens/login_screen.dart';
 
-void main() {
+Future<void> main() async {
   WidgetsFlutterBinding.ensureInitialized();
+  await initializeDateFormatting('en');
   runApp(const MyApp());
 }
 
-class MyApp extends StatelessWidget {
+class MyApp extends StatefulWidget {
   const MyApp({super.key});
+
+  @override
+  State<MyApp> createState() => _MyAppState();
+}
+
+class _MyAppState extends State<MyApp> {
+  ThemeMode _themeMode = ThemeMode.light;
+
+  @override
+  void initState() {
+    super.initState();
+    SecureStorage.getThemeDark().then((dark) {
+      if (mounted) setState(() => _themeMode = dark ? ThemeMode.dark : ThemeMode.light);
+    });
+  }
+
+  void setThemeDark(bool dark) {
+    setState(() => _themeMode = dark ? ThemeMode.dark : ThemeMode.light);
+    SecureStorage.setThemeDark(dark);
+  }
 
   @override
   Widget build(BuildContext context) {
@@ -27,15 +55,23 @@ class MyApp extends StatelessWidget {
       title: 'Jupiter Arena',
       debugShowCheckedModeBanner: false,
       theme: AppTheme.light,
-      home: const MyHomePage(title: 'Jupiter Arena'),
+      darkTheme: AppTheme.dark,
+      themeMode: _themeMode,
+      // Key by theme so the home subtree is recreated on theme switch, avoiding
+      // "GlobalKey used multiple times" (ink renderer) when theme changes.
+      home: KeyedSubtree(
+        key: ValueKey<ThemeMode>(_themeMode),
+        child: MyHomePage(title: 'Jupiter Arena', onThemeChanged: setThemeDark),
+      ),
     );
   }
 }
 
 class MyHomePage extends StatefulWidget {
-  const MyHomePage({super.key, required this.title});
+  const MyHomePage({super.key, required this.title, this.onThemeChanged});
 
   final String title;
+  final void Function(bool dark)? onThemeChanged;
 
   @override
   State<MyHomePage> createState() => _MyHomePageState();
@@ -51,10 +87,52 @@ class _MyHomePageState extends State<MyHomePage> {
         (await SharedPreferences.getInstance()).getString(ApiClient.prefsKey))
         .then((_) {
       if (mounted) setState(() {});
+      _checkUpdate();
     });
     WidgetsBinding.instance.addPostFrameCallback((_) {
       precacheImage(const AssetImage('assets/logo.png'), context);
     });
+  }
+
+  /// Returns true if current version is strictly less than required (e.g. 1.0.0 < 1.0.1).
+  static bool _isVersionOlder(String current, String required) {
+    final c = current.split('.').map((e) => int.tryParse(e) ?? 0).toList();
+    final r = required.split('.').map((e) => int.tryParse(e) ?? 0).toList();
+    for (var i = 0; i < c.length || i < r.length; i++) {
+      final cv = i < c.length ? c[i] : 0;
+      final rv = i < r.length ? r[i] : 0;
+      if (cv < rv) return true;
+      if (cv > rv) return false;
+    }
+    return false;
+  }
+
+  Future<void> _checkUpdate() async {
+    try {
+      final r = await ApiClient.instance.get('/version', useCache: false);
+      if (r.statusCode != 200 || !mounted) return;
+      final body = jsonDecode(r.body) as Map<String, dynamic>?;
+      final minVer = body?['min_app_version']?.toString();
+      if (minVer == null || minVer.isEmpty) return;
+      if (!_isVersionOlder(kAppVersion, minVer)) return;
+      if (!mounted) return;
+      showDialog(
+        context: context,
+        barrierDismissible: false,
+        builder: (ctx) => AlertDialog(
+          title: const Text('Update required'),
+          content: const Text(
+            'A new version of the app is available. Please update from the Play Store to continue.',
+          ),
+          actions: [
+            FilledButton(
+              onPressed: () => Navigator.of(ctx).pop(),
+              child: const Text('OK'),
+            ),
+          ],
+        ),
+      );
+    } catch (_) {}
   }
 
   Future<void> _showSetServerUrlDialog() async {
@@ -152,6 +230,19 @@ class _MyHomePageState extends State<MyHomePage> {
           child: _JupiterLogo(size: 40),
         ),
         title: Text(widget.title),
+        actions: [
+          if (widget.onThemeChanged != null)
+            Builder(
+              builder: (context) {
+                final isDark = Theme.of(context).brightness == Brightness.dark;
+                return IconButton(
+                  icon: Icon(isDark ? Icons.light_mode : Icons.dark_mode),
+                  tooltip: isDark ? 'Light mode' : 'Dark mode',
+                  onPressed: () => widget.onThemeChanged!(!isDark),
+                );
+              },
+            ),
+        ],
       ),
       body: Padding(
         padding: const EdgeInsets.symmetric(horizontal: 24),
@@ -182,99 +273,32 @@ class _MyHomePageState extends State<MyHomePage> {
                 ],
               ),
             ),
-            ElevatedButton.icon(
-              onPressed: _isPinging ? null : _pingServer,
-              icon: _isPinging
-                  ? const SizedBox(
-                      width: 20,
-                      height: 20,
-                      child: CircularProgressIndicator(
-                        strokeWidth: 2,
-                        color: Color(0xFF0D0D0D),
-                      ),
-                    )
-                  : const Icon(Icons.wifi_find, size: 22),
-              label: Text(_isPinging ? 'Pinging...' : 'Ping Gym Server'),
-            ),
-            const SizedBox(height: 20),
             FilledButton.icon(
               onPressed: () => Navigator.of(context).push(
-                MaterialPageRoute(builder: (_) => const DashboardScreen(isEmbedded: false)),
+                MaterialPageRoute(builder: (_) => const LoginScreen()),
               ),
-              icon: const Icon(Icons.how_to_reg, size: 22),
-              label: const Text('Check-In'),
+              icon: const Icon(Icons.login_rounded, size: 22),
+              label: const Text('Sign In'),
               style: FilledButton.styleFrom(
                 backgroundColor: Theme.of(context).colorScheme.primary,
                 foregroundColor: Theme.of(context).colorScheme.onPrimary,
-                padding: const EdgeInsets.symmetric(horizontal: 32, vertical: 16),
+                padding: const EdgeInsets.symmetric(horizontal: 40, vertical: 18),
                 shape: RoundedRectangleBorder(
                   borderRadius: BorderRadius.circular(12),
                 ),
               ),
             ),
-            const SizedBox(height: 20),
-            OutlinedButton.icon(
-              onPressed: () => Navigator.of(context).push(
-                MaterialPageRoute(builder: (_) => const RegistrationScreen()),
-              ),
-              icon: const Icon(Icons.person_add, size: 22),
-              label: const Text('Register Member'),
-              style: OutlinedButton.styleFrom(
-                foregroundColor: Theme.of(context).colorScheme.primary,
-                side: BorderSide(color: Theme.of(context).colorScheme.primary),
-                padding: const EdgeInsets.symmetric(horizontal: 32, vertical: 16),
-                shape: RoundedRectangleBorder(
-                  borderRadius: BorderRadius.circular(12),
-                ),
-              ),
-            ),
-            const SizedBox(height: 20),
-            OutlinedButton.icon(
-              onPressed: () => Navigator.of(context).push(
-                MaterialPageRoute(builder: (_) => const AdminLoginScreen()),
-              ),
-              icon: const Icon(Icons.admin_panel_settings, size: 22),
-              label: const Text('Admin Login'),
-              style: OutlinedButton.styleFrom(
-                foregroundColor: Theme.of(context).colorScheme.primary,
-                side: BorderSide(color: Theme.of(context).colorScheme.primary),
-                padding: const EdgeInsets.symmetric(horizontal: 32, vertical: 16),
-                shape: RoundedRectangleBorder(
-                  borderRadius: BorderRadius.circular(12),
-                ),
-              ),
-            ),
-            const SizedBox(height: 20),
-            OutlinedButton.icon(
-              onPressed: () => Navigator.of(context).push(
-                MaterialPageRoute(builder: (_) => const AttendanceReportScreen()),
-              ),
-              icon: const Icon(Icons.calendar_today, size: 22),
-              label: const Text('Today\'s Attendance'),
-              style: OutlinedButton.styleFrom(
-                foregroundColor: Theme.of(context).colorScheme.primary,
-                side: BorderSide(color: Theme.of(context).colorScheme.primary),
-                padding: const EdgeInsets.symmetric(horizontal: 32, vertical: 16),
-                shape: RoundedRectangleBorder(
-                  borderRadius: BorderRadius.circular(12),
-                ),
-              ),
-            ),
-            const SizedBox(height: 20),
-            OutlinedButton.icon(
-              onPressed: () => Navigator.of(context).push(
-                MaterialPageRoute(builder: (_) => const MemberLoginScreen()),
-              ),
-              icon: const Icon(Icons.login, size: 22),
-              label: const Text('Member Login'),
-              style: OutlinedButton.styleFrom(
-                foregroundColor: Theme.of(context).colorScheme.primary,
-                side: BorderSide(color: Theme.of(context).colorScheme.primary),
-                padding: const EdgeInsets.symmetric(horizontal: 32, vertical: 16),
-                shape: RoundedRectangleBorder(
-                  borderRadius: BorderRadius.circular(12),
-                ),
-              ),
+            const SizedBox(height: 12),
+            TextButton.icon(
+              onPressed: _isPinging ? null : _pingServer,
+              icon: _isPinging
+                  ? const SizedBox(
+                      width: 18,
+                      height: 18,
+                      child: CircularProgressIndicator(strokeWidth: 2),
+                    )
+                  : const Icon(Icons.wifi_find, size: 20),
+              label: Text(_isPinging ? 'Pinging...' : 'Ping server'),
             ),
           ],
             ),

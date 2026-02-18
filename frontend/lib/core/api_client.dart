@@ -1,3 +1,10 @@
+// ---------------------------------------------------------------------------
+// API client – single HTTP client for all backend calls.
+// ---------------------------------------------------------------------------
+// Use [ApiClient.instance] for GET/POST. Handles base URL (env or saved),
+// timeouts, optional GET cache, and DNS fallback (DoH) when device DNS fails.
+// ---------------------------------------------------------------------------
+
 import 'dart:convert';
 import 'dart:io';
 

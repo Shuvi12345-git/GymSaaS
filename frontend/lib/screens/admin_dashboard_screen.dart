@@ -1,3 +1,12 @@
+// ---------------------------------------------------------------------------
+// Admin dashboard – bottom nav: Members, Attendance, Billing, More.
+// ---------------------------------------------------------------------------
+// Hosts tabs for member list, attendance report, billing/invoices, and
+// "More" (analytics, export, registration, fee reminders, settings).
+// Session timeout (e.g. 15 min) and theme toggle. Uses [ApiClient] for all API calls.
+// ---------------------------------------------------------------------------
+
+import 'dart:async';
 import 'dart:convert';
 
 import 'package:flutter/material.dart';
@@ -7,10 +16,14 @@ import 'package:http/http.dart' as http;
 import 'package:url_launcher/url_launcher.dart';
 
 import '../core/api_client.dart';
+import '../core/date_utils.dart';
+import '../core/export_helper.dart';
 import '../theme/app_theme.dart';
+import 'login_screen.dart';
 import 'attendance_report_screen.dart';
 import 'billing_screen.dart';
 import 'dashboard_screen.dart';
+import 'member_detail_screen.dart';
 import 'registration_screen.dart';
 
 final _apiBase = ApiClient.baseUrl;
@@ -27,6 +40,38 @@ class _AdminDashboardScreenState extends State<AdminDashboardScreen> {
   int _selectedIndex = 0;
   int _membersRefreshKey = 0;
   final List<Widget?> _tabBodies = [null, null, null, null];
+  DateTime _lastActivityAt = DateTime.now();
+  Timer? _sessionTimer;
+  static const Duration _sessionTimeout = Duration(minutes: 15);
+
+  @override
+  void initState() {
+    super.initState();
+    _sessionTimer = Timer.periodic(const Duration(minutes: 1), (_) {
+      if (!mounted) return;
+      if (DateTime.now().difference(_lastActivityAt) > _sessionTimeout) {
+        _sessionTimer?.cancel();
+        _sessionTimer = null;
+        Navigator.of(context).pushAndRemoveUntil(
+          MaterialPageRoute(builder: (_) => const LoginScreen()),
+          (_) => false,
+        );
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(content: Text('Session expired. Please log in again.')),
+        );
+      }
+    });
+  }
+
+  @override
+  void dispose() {
+    _sessionTimer?.cancel();
+    super.dispose();
+  }
+
+  void _onActivity() {
+    _lastActivityAt = DateTime.now();
+  }
 
   Widget _buildTabAt(int index) {
     switch (index) {
@@ -39,6 +84,7 @@ class _AdminDashboardScreenState extends State<AdminDashboardScreen> {
             await Navigator.push(context, MaterialPageRoute(builder: (_) => const RegistrationScreen()));
             setState(() => _membersRefreshKey++);
           },
+          onMemberTap: (m) => Navigator.push(context, MaterialPageRoute(builder: (_) => MemberDetailScreen(member: m))).then((_) => setState(() => _membersRefreshKey++)),
         );
       case 2:
         return _FeesTab();
@@ -85,16 +131,20 @@ class _AdminDashboardScreenState extends State<AdminDashboardScreen> {
           ),
         ],
       ),
-      body: Padding(
-        padding: const EdgeInsets.all(_padding),
-        child: IndexedStack(
-          index: _selectedIndex,
-          children: [
-            _tabBodies[0] ?? const SizedBox.shrink(),
-            _tabBodies[1] ?? const SizedBox.shrink(),
-            _tabBodies[2] ?? const SizedBox.shrink(),
-            _tabBodies[3] ?? const SizedBox.shrink(),
-          ],
+      body: Listener(
+        onPointerDown: (_) => _onActivity(),
+        behavior: HitTestBehavior.translucent,
+        child: Padding(
+          padding: EdgeInsets.all(LayoutConstants.screenPadding(context)),
+          child: IndexedStack(
+            index: _selectedIndex,
+            children: [
+              _tabBodies[0] ?? const SizedBox.shrink(),
+              _tabBodies[1] ?? const SizedBox.shrink(),
+              _tabBodies[2] ?? const SizedBox.shrink(),
+              _tabBodies[3] ?? const SizedBox.shrink(),
+            ],
+          ),
         ),
       ),
       bottomNavigationBar: NavigationBar(
@@ -102,6 +152,7 @@ class _AdminDashboardScreenState extends State<AdminDashboardScreen> {
         onDestinationSelected: (i) {
           if (_tabBodies[i] == null) _tabBodies[i] = _buildTabAt(i);
           setState(() => _selectedIndex = i);
+          _onActivity();
         },
         backgroundColor: AppTheme.surfaceVariant,
         indicatorColor: AppTheme.primary,
@@ -157,17 +208,25 @@ class _AdminDashboardScreenState extends State<AdminDashboardScreen> {
     );
   }
 
-  void _downloadExport(String path, String filename) async {
-    final uri = Uri.parse('$_apiBase$path');
-    try {
-      await launchUrl(uri, mode: LaunchMode.externalApplication);
-      if (context.mounted) {
-        ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text('Downloading $filename')));
-      }
-    } catch (_) {
-      if (context.mounted) {
-        ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text('Open $uri to download $filename')));
-      }
+  Future<void> _downloadExport(String path, String filename) async {
+    if (!context.mounted) return;
+    ScaffoldMessenger.of(context).showSnackBar(
+      SnackBar(content: Text('Exporting $filename...')),
+    );
+    final savedPath = await saveExportToDownloads(path, filename);
+    if (!context.mounted) return;
+    if (savedPath != null) {
+      final label = await exportLocationLabel();
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(
+          content: Text('Saved to $label'),
+          duration: const Duration(seconds: 3),
+        ),
+      );
+    } else {
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(content: Text('Export failed. Check connection and try again.')),
+      );
     }
   }
 }
@@ -206,8 +265,8 @@ class _OverviewTabState extends State<_OverviewTab> {
       Map<String, String>? params;
       if (_dateFrom != null && _dateTo != null) {
         params = {
-          'date_from': '${_dateFrom!.year}-${_dateFrom!.month.toString().padLeft(2, '0')}-${_dateFrom!.day.toString().padLeft(2, '0')}',
-          'date_to': '${_dateTo!.year}-${_dateTo!.month.toString().padLeft(2, '0')}-${_dateTo!.day.toString().padLeft(2, '0')}',
+          'date_from': formatApiDate(_dateFrom!),
+          'date_to': formatApiDate(_dateTo!),
         };
       }
       final r = await ApiClient.instance.get('/analytics/dashboard', queryParameters: params, useCache: true);
@@ -273,6 +332,59 @@ class _OverviewTabState extends State<_OverviewTab> {
           children: [
             Row(
               children: [
+                Icon(FontAwesomeIcons.chartLine, size: 20, color: AppTheme.primary),
+                const SizedBox(width: 8),
+                Expanded(
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      Text(
+                        'Today\'s Snapshot',
+                        style: GoogleFonts.poppins(fontSize: 18, fontWeight: FontWeight.w600, color: AppTheme.onSurface),
+                      ),
+                      Text(
+                        formatDisplayDateWithWeekday(DateTime.now()),
+                        style: GoogleFonts.poppins(fontSize: 13, color: Colors.grey.shade600),
+                      ),
+                    ],
+                  ),
+                ),
+              ],
+            ),
+            const SizedBox(height: 16),
+            Row(
+              children: [
+                Expanded(
+                  child: _AnalyticsCard(
+                    title: 'Check-ins',
+                    value: '${d['today_check_ins'] ?? d['today_attendance_count'] ?? 0}',
+                    icon: FontAwesomeIcons.rightToBracket,
+                    color: AppTheme.success,
+                  ),
+                ),
+                const SizedBox(width: 12),
+                Expanded(
+                  child: _AnalyticsCard(
+                    title: 'Check-outs',
+                    value: '${d['today_check_outs'] ?? 0}',
+                    icon: FontAwesomeIcons.rightFromBracket,
+                    color: Colors.grey,
+                  ),
+                ),
+                const SizedBox(width: 12),
+                Expanded(
+                  child: _AnalyticsCard(
+                    title: 'Currently In',
+                    value: '${d['today_currently_in'] ?? 0}',
+                    icon: FontAwesomeIcons.peopleGroup,
+                    color: Colors.blue,
+                  ),
+                ),
+              ],
+            ),
+            const SizedBox(height: 24),
+            Row(
+              children: [
                 OutlinedButton.icon(
                   onPressed: _pickDateRange,
                   icon: const Icon(Icons.date_range, size: 18),
@@ -288,8 +400,33 @@ class _OverviewTabState extends State<_OverviewTab> {
                   ),
               ],
             ),
+            Row(
+              children: [
+                Expanded(
+                  child: _AnalyticsCard(
+                    title: 'Today\'s check-ins',
+                    value: '${d['today_attendance_count'] ?? 0}',
+                    icon: FontAwesomeIcons.userCheck,
+                    color: AppTheme.primary,
+                  ),
+                ),
+                const SizedBox(width: 16),
+                Expanded(
+                  child: InkWell(
+                    onTap: () => Navigator.push(context, MaterialPageRoute(builder: (_) => const AttendanceReportScreen())),
+                    borderRadius: BorderRadius.circular(16),
+                    child: _AnalyticsCard(
+                      title: 'Attendance',
+                      value: 'View',
+                      icon: FontAwesomeIcons.calendarDays,
+                      color: AppTheme.primary,
+                    ),
+                  ),
+                ),
+              ],
+            ),
+            const SizedBox(height: 16),
             if (d['date_from'] != null && d['date_to'] != null) ...[
-              const SizedBox(height: 12),
               Row(
                 children: [
                   Expanded(
@@ -416,27 +553,63 @@ class _AnalyticsCard extends StatelessWidget {
   }
 }
 
-class _MembersTab extends StatelessWidget {
+class _MembersTab extends StatefulWidget {
   final int refreshKey;
   final VoidCallback onRegisterPressed;
+  final void Function(dynamic member) onMemberTap;
 
-  const _MembersTab({required this.refreshKey, required this.onRegisterPressed});
+  const _MembersTab({required this.refreshKey, required this.onRegisterPressed, required this.onMemberTap});
+
+  @override
+  State<_MembersTab> createState() => _MembersTabState();
+}
+
+class _MembersTabState extends State<_MembersTab> {
+  final _searchController = TextEditingController();
+
+  @override
+  void dispose() {
+    _searchController.dispose();
+    super.dispose();
+  }
 
   @override
   Widget build(BuildContext context) {
     return Column(
       children: [
-        Align(
-          alignment: Alignment.centerRight,
-          child: FilledButton.icon(
-            onPressed: onRegisterPressed,
-            icon: const Icon(FontAwesomeIcons.userPlus, size: 18),
-            label: const Text('Register Member'),
-            style: FilledButton.styleFrom(backgroundColor: AppTheme.primary, foregroundColor: AppTheme.onPrimary),
+        Row(
+          children: [
+            Expanded(
+              child: TextField(
+                controller: _searchController,
+                decoration: InputDecoration(
+                  hintText: 'Search by name…',
+                  prefixIcon: const Icon(Icons.search, size: 20),
+                  border: OutlineInputBorder(borderRadius: BorderRadius.circular(12)),
+                  contentPadding: const EdgeInsets.symmetric(horizontal: 12, vertical: 10),
+                  isDense: true,
+                ),
+                onChanged: (_) => setState(() {}),
+              ),
+            ),
+            const SizedBox(width: 8),
+            FilledButton.icon(
+              onPressed: widget.onRegisterPressed,
+              icon: const Icon(FontAwesomeIcons.userPlus, size: 18),
+              label: const Text('Register'),
+              style: FilledButton.styleFrom(backgroundColor: AppTheme.primary, foregroundColor: AppTheme.onPrimary),
+            ),
+          ],
+        ),
+        const SizedBox(height: 12),
+        Expanded(
+          child: DashboardScreen(
+            key: ValueKey(widget.refreshKey),
+            isEmbedded: true,
+            searchQuery: _searchController.text.trim().isEmpty ? null : _searchController.text.trim(),
+            onMemberTap: widget.onMemberTap,
           ),
         ),
-        const SizedBox(height: 16),
-        Expanded(child: DashboardScreen(key: ValueKey(refreshKey), isEmbedded: true)),
       ],
     );
   }
@@ -451,6 +624,8 @@ class _FeesTabState extends State<_FeesTab> {
   Map<String, dynamic>? _summary;
   List<dynamic> _payments = [];
   bool _loading = true;
+  /// null = show all; 'Paid' | 'Due' | 'Overdue' = filter by status
+  String? _statusFilter;
 
   @override
   void initState() {
@@ -491,19 +666,56 @@ class _FeesTabState extends State<_FeesTab> {
           children: [
             Row(
               children: [
-                Expanded(child: _FeeChip('Paid', paid['count'] ?? 0, paid['total_amount'] ?? 0, AppTheme.success)),
+                Expanded(
+                  child: _FeeChip(
+                    'Paid',
+                    paid['count'] ?? 0,
+                    paid['total_amount'] ?? 0,
+                    AppTheme.success,
+                    isSelected: _statusFilter == 'Paid',
+                    onTap: () => setState(() => _statusFilter = _statusFilter == 'Paid' ? null : 'Paid'),
+                  ),
+                ),
                 const SizedBox(width: 12),
-                Expanded(child: _FeeChip('Due', due['count'] ?? 0, due['total_amount'] ?? 0, AppTheme.primary)),
+                Expanded(
+                  child: _FeeChip(
+                    'Due',
+                    due['count'] ?? 0,
+                    due['total_amount'] ?? 0,
+                    AppTheme.primary,
+                    isSelected: _statusFilter == 'Due',
+                    onTap: () => setState(() => _statusFilter = _statusFilter == 'Due' ? null : 'Due'),
+                  ),
+                ),
                 const SizedBox(width: 12),
-                Expanded(child: _FeeChip('Overdue', overdue['count'] ?? 0, overdue['total_amount'] ?? 0, Colors.orange)),
+                Expanded(
+                  child: _FeeChip(
+                    'Overdue',
+                    overdue['count'] ?? 0,
+                    overdue['total_amount'] ?? 0,
+                    Colors.orange,
+                    isSelected: _statusFilter == 'Overdue',
+                    onTap: () => setState(() => _statusFilter = _statusFilter == 'Overdue' ? null : 'Overdue'),
+                  ),
+                ),
               ],
             ),
             const SizedBox(height: 24),
             Text('All Payments', style: GoogleFonts.poppins(fontSize: 18, fontWeight: FontWeight.w600, color: AppTheme.onSurface)),
+            if (_statusFilter != null)
+              Padding(
+                padding: const EdgeInsets.only(top: 4),
+                child: Text(
+                  'Showing $_statusFilter only. Tap the chip again to show all.',
+                  style: GoogleFonts.poppins(fontSize: 12, color: Colors.grey.shade600),
+                ),
+              ),
             const SizedBox(height: 12),
-            ...(_payments.map((p) {
+            ...((_statusFilter == null
+                    ? _payments
+                    : _payments.where((p) => (p as Map<String, dynamic>)['status'] == _statusFilter).toList())
+                .map((p) {
               final map = p as Map<String, dynamic>;
-              final pid = map['id'] as String? ?? '';
               return Card(
                 color: AppTheme.surfaceVariant,
                 margin: const EdgeInsets.only(bottom: 8),
@@ -609,14 +821,19 @@ class _FeeChip extends StatelessWidget {
   final int count;
   final int amount;
   final Color color;
+  final bool isSelected;
+  final VoidCallback? onTap;
 
-  const _FeeChip(this.label, this.count, this.amount, this.color);
+  const _FeeChip(this.label, this.count, this.amount, this.color, {this.isSelected = false, this.onTap});
 
   @override
   Widget build(BuildContext context) {
-    return Card(
-      color: AppTheme.surfaceVariant,
-      shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12), side: BorderSide(color: color.withOpacity(0.5))),
+    final card = Card(
+      color: isSelected ? color.withOpacity(0.12) : AppTheme.surfaceVariant,
+      shape: RoundedRectangleBorder(
+        borderRadius: BorderRadius.circular(12),
+        side: BorderSide(color: color, width: isSelected ? 2 : 1),
+      ),
       child: Padding(
         padding: const EdgeInsets.all(16),
         child: Column(
@@ -628,6 +845,15 @@ class _FeeChip extends StatelessWidget {
             Text('₹$amount', style: GoogleFonts.poppins(color: Colors.grey.shade600, fontSize: 12)),
           ],
         ),
+      ),
+    );
+    if (onTap == null) return card;
+    return Material(
+      color: Colors.transparent,
+      child: InkWell(
+        onTap: onTap,
+        borderRadius: BorderRadius.circular(12),
+        child: card,
       ),
     );
   }

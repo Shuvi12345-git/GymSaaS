@@ -223,3 +223,28 @@ To change cache duration or base URL, edit `lib/core/api_client.dart`.
 
 - `backend/`: FastAPI application, database logic, and automation scripts.
 - `frontend/`: Flutter application code (Screens, Widgets, Models). `lib/core/api_client.dart` for shared HTTP and cache.
+
+## Code structure (for developers)
+
+The codebase is commented so that **junior developers** can follow the flow and understand where to change things. Start with the entry points below, then follow the section comments and docstrings in each file.
+
+### Backend (`backend/`)
+
+| File / area | Purpose |
+|-------------|---------|
+| **`main.py`** | Single FastAPI app: config, DB (MongoDB collections), time helpers (IST), CORS, Pydantic models, and all routes. Section comments inside mark: **Members** (CRUD, by-phone, attendance stats), **Attendance** (check-in/out, by date, summary), **Payments** (list, fees summary, log monthly, mark paid), **Billing** (walk-in, history, mark paid), **Analytics** (dashboard, fee reminders), **Export** (Excel). |
+| **`utils.py`** | Simulated notifications (WhatsApp/email). `send_notification(notification_type, user, extra)` — in production you would replace with real SMS/email/WhatsApp. |
+
+**MongoDB collections** used in `main.py`: `members`, `attendance`, `payments`, `invoices`. All dates in business logic use **IST** (see time helpers at top of `main.py`).
+
+### Frontend (`frontend/lib/`)
+
+| Folder / file | Purpose |
+|---------------|---------|
+| **`main.dart`** | App entry: theme (light/dark), initial route (Login vs Admin Dashboard vs Member Home). Theme and server URL are persisted. |
+| **`core/`** | Shared logic: **api_client.dart** (single HTTP client, base URL, cache, DNS fallback), **date_utils.dart** (display + API date format), **export_helper.dart** (download Excel to device), **secure_storage.dart** (admin phone/PIN, theme), **app_constants.dart** (app version for update check). |
+| **`theme/app_theme.dart`** | Light and dark theme (colors, Poppins, Material 3). |
+| **`screens/`** | **login_screen.dart** (unified login → Admin or Member), **admin_dashboard_screen.dart** (tabs: Members, Attendance, Billing, More), **dashboard_screen.dart** (member list, search, check-in), **member_detail_screen.dart** (profile, edit, payments, attendance), **member_home_screen.dart** (member portal: check-in/out, fees), **attendance_report_screen.dart**, **billing_screen.dart**, **registration_screen.dart**, **admin_login_screen.dart**, **member_login_screen.dart**. |
+| **`widgets/`** | **animated_fade.dart** (FadeInSlide for list items), **skeleton_loading.dart** (skeleton placeholders + haptics). |
+
+To trace a feature (e.g. “mark payment paid”): start from the screen (e.g. `member_detail_screen.dart` or billing), find the button handler, then follow the `ApiClient` call to the backend route in `main.py` (e.g. `POST /payments/pay`).
