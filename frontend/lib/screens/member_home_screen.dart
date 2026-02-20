@@ -17,7 +17,9 @@ import 'package:image_picker/image_picker.dart';
 import 'package:file_picker/file_picker.dart';
 
 import '../core/api_client.dart';
+import '../core/date_utils.dart';
 import '../widgets/skeleton_loading.dart';
+import '../widgets/attendance_stats_card.dart';
 import '../theme/app_theme.dart';
 
 final _apiBase = ApiClient.baseUrl;
@@ -42,12 +44,32 @@ class _MemberHomeScreenState extends State<MemberHomeScreen> {
   /// Full member (photo, id_document) from GET /members/{id}; null until loaded.
   Map<String, dynamic>? _fullMember;
   final ImagePicker _imagePicker = ImagePicker();
+  Map<String, dynamic>? _attendanceStats;
+  bool _loadingStats = true;
 
   @override
   void initState() {
     super.initState();
     _loadPayments();
     _loadFullMember();
+    _loadStats();
+  }
+
+  Future<void> _loadStats() async {
+    final mid = widget.member['id'] as String?;
+    if (mid == null) return;
+    setState(() => _loadingStats = true);
+    try {
+      final r = await ApiClient.instance.get('/members/$mid/attendance-stats', useCache: false);
+      if (mounted && r.statusCode == 200) {
+        setState(() {
+          _attendanceStats = jsonDecode(r.body) as Map<String, dynamic>;
+          _loadingStats = false;
+        });
+      } else if (mounted) setState(() => _loadingStats = false);
+    } catch (_) {
+      if (mounted) setState(() => _loadingStats = false);
+    }
   }
 
   Future<void> _loadFullMember() async {
@@ -120,7 +142,14 @@ class _MemberHomeScreenState extends State<MemberHomeScreen> {
         headers: {'Content-Type': 'application/json'},
         body: jsonEncode(body),
       );
-      if (mounted && r.statusCode >= 200 && r.statusCode < 300) await _loadFullMember();
+      if (mounted && r.statusCode >= 200 && r.statusCode < 300) {
+        await _loadFullMember();
+        if (mounted) {
+          ScaffoldMessenger.of(context).showSnackBar(
+            SnackBar(content: Text(base64 != null ? 'ID document uploaded successfully' : 'ID document removed')),
+          );
+        }
+      }
     } catch (e) {
       if (mounted) ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text('Error: ${e.toString().split('\n').first}')));
     }
@@ -136,6 +165,8 @@ class _MemberHomeScreenState extends State<MemberHomeScreen> {
       if (r.statusCode >= 200 && r.statusCode < 300) {
         hapticSuccess();
         setState(() { _checkedInToday = true; _checkingIn = false; });
+        _loadStats();
+        _loadFullMember();
         ScaffoldMessenger.of(context).showSnackBar(
           const SnackBar(content: Text('Checked in successfully!')),
         );
@@ -166,6 +197,8 @@ class _MemberHomeScreenState extends State<MemberHomeScreen> {
       if (r.statusCode >= 200 && r.statusCode < 300) {
         hapticSuccess();
         setState(() { _checkedOutToday = true; _checkingOut = false; });
+        _loadStats();
+        _loadFullMember();
         ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text('Checked out successfully!')));
       } else {
         final body = jsonDecode(r.body) as Map<String, dynamic>?;
@@ -209,12 +242,13 @@ class _MemberHomeScreenState extends State<MemberHomeScreen> {
 
   @override
   Widget build(BuildContext context) {
-    final name = widget.member['name'] as String? ?? '';
-    final batch = widget.member['batch'] as String? ?? '';
-    final status = widget.member['status'] as String? ?? 'Active';
-    final lastAttendance = widget.member['last_attendance_date'] as String? ?? '';
-    final workoutSchedule = widget.member['workout_schedule'] as String? ?? '';
-    final dietChart = widget.member['diet_chart'] as String? ?? '';
+    final m = _fullMember ?? widget.member;
+    final name = m['name'] as String? ?? '';
+    final batch = m['batch'] as String? ?? '';
+    final status = m['status'] as String? ?? 'Active';
+    final lastAttendance = m['last_attendance_date'] as String? ?? '';
+    final workoutSchedule = m['workout_schedule'] as String? ?? '';
+    final dietChart = m['diet_chart'] as String? ?? '';
     final padding = LayoutConstants.screenPadding(context);
     final radius = LayoutConstants.cardRadius(context);
 
@@ -225,7 +259,13 @@ class _MemberHomeScreenState extends State<MemberHomeScreen> {
           children: [
             Image.asset('assets/logo.png', height: 28, width: 28, fit: BoxFit.contain, errorBuilder: (_, __, ___) => const Icon(Icons.fitness_center, color: AppTheme.primary, size: 24)),
             const SizedBox(width: 8),
-            Text('Jupiter Arena', style: GoogleFonts.poppins(fontWeight: FontWeight.w600, color: AppTheme.onSurface)),
+            Flexible(
+              child: FittedBox(
+                fit: BoxFit.scaleDown,
+                alignment: Alignment.centerLeft,
+                child: Text('Jupiter Arena', style: GoogleFonts.poppins(fontWeight: FontWeight.w600, color: AppTheme.onSurface)),
+              ),
+            ),
           ],
         ),
         backgroundColor: AppTheme.surface,
@@ -315,11 +355,49 @@ class _MemberHomeScreenState extends State<MemberHomeScreen> {
                                   ],
                                 ),
                                 const SizedBox(height: 16),
-                                Text(
-                                  _fullMember?['id_document_base64'] != null
-                                      ? 'ID: ${_fullMember!['id_document_type'] ?? 'Uploaded'}'
-                                      : 'Identity document',
-                                  style: GoogleFonts.poppins(fontSize: 14, color: AppTheme.onSurface),
+                                Row(
+                                  children: [
+                                    if (_fullMember?['id_document_base64'] != null) ...[
+                                      GestureDetector(
+                                        onTap: () => showDialog(
+                                          context: context,
+                                          builder: (_) => Dialog(
+                                            backgroundColor: Colors.transparent,
+                                            insetPadding: const EdgeInsets.all(16),
+                                            child: InteractiveViewer(
+                                              clipBehavior: Clip.none,
+                                              maxScale: 5.0,
+                                              child: Image.memory(
+                                                base64Decode(_fullMember!['id_document_base64'] as String),
+                                                fit: BoxFit.contain,
+                                              ),
+                                            ),
+                                          ),
+                                        ),
+                                        child: Container(
+                                          width: 40,
+                                          height: 40,
+                                          decoration: BoxDecoration(
+                                            borderRadius: BorderRadius.circular(6),
+                                            border: Border.all(color: Colors.grey.shade300),
+                                            image: DecorationImage(
+                                              image: MemoryImage(base64Decode(_fullMember!['id_document_base64'] as String)),
+                                              fit: BoxFit.cover,
+                                            ),
+                                          ),
+                                        ),
+                                      ),
+                                      const SizedBox(width: 12),
+                                    ],
+                                    Expanded(
+                                      child: Text(
+                                        _fullMember?['id_document_base64'] != null
+                                            ? 'ID: ${_fullMember!['id_document_type'] ?? 'Uploaded'}'
+                                            : 'Identity document',
+                                        style: GoogleFonts.poppins(fontSize: 14, color: AppTheme.onSurface),
+                                      ),
+                                    ),
+                                  ],
                                 ),
                                 const SizedBox(height: 6),
                                 Wrap(
@@ -426,24 +504,12 @@ class _MemberHomeScreenState extends State<MemberHomeScreen> {
               const SizedBox(height: 24),
               Text('Attendance', style: GoogleFonts.poppins(fontWeight: FontWeight.w600, color: AppTheme.onSurface)),
               const SizedBox(height: 8),
-              Card(
-                color: AppTheme.surfaceVariant,
-                shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(radius)),
-                child: Padding(
-                  padding: EdgeInsets.all(padding),
-                  child: Row(
-                    children: [
-                      Icon(Icons.calendar_today, color: AppTheme.primary),
-                      const SizedBox(width: 12),
-                      Expanded(
-                        child: Text(
-                          lastAttendance.isEmpty ? 'No check-ins yet' : 'Last check-in: $lastAttendance',
-                          style: GoogleFonts.poppins(color: AppTheme.onSurface),
-                        ),
-                      ),
-                    ],
-                  ),
-                ),
+              AttendanceStatsWidget(
+                totalVisits: _attendanceStats?['total_visits'] ?? 0,
+                visitsThisMonth: _attendanceStats?['visits_this_month'] ?? 0,
+                avgDurationMinutes: _attendanceStats?['avg_duration_minutes'],
+                lastVisit: lastAttendance.isEmpty ? '-' : lastAttendance,
+                isLoading: _loadingStats,
               ),
               const SizedBox(height: 24),
               if (_isPT) ...[

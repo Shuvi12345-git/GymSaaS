@@ -33,6 +33,9 @@ class Member {
   final String? idDocumentBase64;
   final String? idDocumentType;  // Aadhar, Driving Licence, Voter ID, Passport
   final DateTime? createdAt;
+  final DateTime? lastAttendanceDate;
+  final bool? isCheckedInToday;
+  final bool? isCheckedOutToday;
 
   Member({
     required this.id,
@@ -48,6 +51,9 @@ class Member {
     this.idDocumentBase64,
     this.idDocumentType,
     this.createdAt,
+    this.lastAttendanceDate,
+    this.isCheckedInToday,
+    this.isCheckedOutToday,
   });
 
   factory Member.fromJson(Map<String, dynamic> json) {
@@ -56,6 +62,22 @@ class Member {
       final v = json['created_at'];
       if (v != null) createdAt = DateTime.tryParse(v.toString());
     } catch (_) {}
+    DateTime? lastAttendanceDate;
+    try {
+      final v = json['last_attendance_date'];
+      if (v != null) lastAttendanceDate = DateTime.tryParse(v.toString());
+    } catch (_) {}
+    
+    bool? isCheckedIn;
+    bool? isCheckedOut;
+    try {
+      final todayStatus = json['today_status'] as Map<String, dynamic>?;
+      if (todayStatus != null) {
+        isCheckedIn = todayStatus['checked_in'] as bool?;
+        isCheckedOut = todayStatus['checked_out'] as bool?;
+      }
+    } catch (_) {}
+
     return Member(
       id: json['id'] as String? ?? '',
       name: json['name'] as String? ?? '',
@@ -70,6 +92,9 @@ class Member {
       idDocumentBase64: json['id_document_base64'] as String?,
       idDocumentType: json['id_document_type'] as String?,
       createdAt: createdAt,
+      lastAttendanceDate: lastAttendanceDate,
+      isCheckedInToday: isCheckedIn,
+      isCheckedOutToday: isCheckedOut,
     );
   }
 }
@@ -716,35 +741,72 @@ class _DashboardScreenState extends State<DashboardScreen> {
                                           style: TextButton.styleFrom(minimumSize: Size.zero, padding: const EdgeInsets.symmetric(horizontal: 8), foregroundColor: AppTheme.primary),
                                           child: const Text('PT'),
                                         ),
-                                      OutlinedButton(
-                                        onPressed: (isCheckingOut || !isActive) ? null : () => _checkOut(m),
-                                        style: OutlinedButton.styleFrom(
-                                          foregroundColor: AppTheme.primary,
-                                          side: const BorderSide(color: AppTheme.primary),
-                                          padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 8),
-                                          minimumSize: Size.zero,
+                                      if (m.isCheckedOutToday == true)
+                                        Container(
+                                          padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
+                                          decoration: BoxDecoration(
+                                            color: AppTheme.success.withOpacity(0.1),
+                                            borderRadius: BorderRadius.circular(8),
+                                            border: Border.all(color: AppTheme.success),
+                                          ),
+                                          child: Row(
+                                            mainAxisSize: MainAxisSize.min,
+                                            children: [
+                                              Icon(Icons.check_circle, size: 16, color: AppTheme.success),
+                                              const SizedBox(width: 4),
+                                              Text('Checked Out', style: TextStyle(color: AppTheme.success, fontWeight: FontWeight.bold, fontSize: 13)),
+                                            ],
+                                          ),
+                                        )
+                                      else if (m.isCheckedInToday == true)
+                                        Row(
+                                          mainAxisSize: MainAxisSize.min,
+                                          children: [
+                                            Container(
+                                              padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
+                                              decoration: BoxDecoration(
+                                                color: AppTheme.success.withOpacity(0.1),
+                                                borderRadius: BorderRadius.circular(8),
+                                                border: Border.all(color: AppTheme.success),
+                                              ),
+                                              child: Row(
+                                                mainAxisSize: MainAxisSize.min,
+                                                children: [
+                                                  Icon(Icons.check_circle, size: 16, color: AppTheme.success),
+                                                  const SizedBox(width: 4),
+                                                  Text('Checked In', style: TextStyle(color: AppTheme.success, fontWeight: FontWeight.bold, fontSize: 13)),
+                                                ],
+                                              ),
+                                            ),
+                                            const SizedBox(width: 8),
+                                            OutlinedButton(
+                                              onPressed: (isCheckingOut || !isActive) ? null : () => _checkOut(m),
+                                              style: OutlinedButton.styleFrom(
+                                                foregroundColor: AppTheme.primary,
+                                                side: const BorderSide(color: AppTheme.primary),
+                                                padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 8),
+                                                minimumSize: Size.zero,
+                                              ),
+                                              child: isCheckingOut
+                                                  ? SizedBox(width: 16, height: 16, child: CircularProgressIndicator(strokeWidth: 2, color: AppTheme.primary))
+                                                  : const Text('Check-Out'),
+                                            ),
+                                          ],
+                                        )
+                                      else
+                                        FilledButton.icon(
+                                          onPressed: (isCheckingIn || !isActive) ? null : () => _checkIn(m),
+                                          style: FilledButton.styleFrom(
+                                            backgroundColor: AppTheme.primary,
+                                            foregroundColor: AppTheme.onPrimary,
+                                            padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 10),
+                                            minimumSize: Size.zero,
+                                          ),
+                                          icon: isCheckingIn
+                                              ? const SizedBox(width: 18, height: 18, child: CircularProgressIndicator(strokeWidth: 2, color: AppTheme.onPrimary))
+                                              : const Icon(Icons.login, size: 18),
+                                          label: const Text('Check-In'),
                                         ),
-                                        child: isCheckingOut
-                                            ? SizedBox(width: 16, height: 16, child: CircularProgressIndicator(strokeWidth: 2, color: AppTheme.primary))
-                                            : const Text('Check-Out'),
-                                      ),
-                                      const SizedBox(width: 6),
-                                      FilledButton(
-                                        onPressed: isCheckingIn ? null : () => _checkIn(m),
-                                        style: FilledButton.styleFrom(
-                                          backgroundColor: AppTheme.primary,
-                                          foregroundColor: AppTheme.onPrimary,
-                                          padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 10),
-                                          minimumSize: Size.zero,
-                                        ),
-                                        child: isCheckingIn
-                                            ? const SizedBox(
-                                                width: 18,
-                                                height: 18,
-                                                child: CircularProgressIndicator(strokeWidth: 2, color: AppTheme.onPrimary),
-                                              )
-                                            : const Text('Check-In'),
-                                      ),
                                     ],
                                   ),
                                 ],

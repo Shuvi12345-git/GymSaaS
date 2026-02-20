@@ -229,7 +229,10 @@ class _MyHomePageState extends State<MyHomePage> {
           padding: const EdgeInsets.all(8),
           child: _JupiterLogo(size: 40),
         ),
-        title: Text(widget.title),
+        title: FittedBox(
+          fit: BoxFit.scaleDown,
+          child: Text(widget.title),
+        ),
         actions: [
           if (widget.onThemeChanged != null)
             Builder(

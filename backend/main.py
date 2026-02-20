@@ -137,6 +137,13 @@ class MemberCreate(BaseModel):
     id_document_type: str | None = None  # e.g. Aadhar, Driving Licence, Voter ID, Passport
 
 
+class TodayAttendance(BaseModel):
+    checked_in: bool = False
+    checked_out: bool = False
+    check_in_time: str | None = None
+    check_out_time: str | None = None
+
+
 class MemberResponse(BaseModel):
     id: str
     name: str
@@ -152,6 +159,7 @@ class MemberResponse(BaseModel):
     photo_base64: str | None = None
     id_document_base64: str | None = None
     id_document_type: str | None = None
+    today_status: TodayAttendance | None = None
 
 
 class MemberPTUpdate(BaseModel):
@@ -323,7 +331,12 @@ async def get_member_by_id(member_id: str):
     doc = await members_collection.find_one({"_id": oid})
     if not doc:
         raise HTTPException(status_code=404, detail="Member not found")
-    return _doc_to_member_response(doc)
+        
+    date_ist_str = today_ist().strftime("%Y-%m-%d")
+    att_doc = await attendance_collection.find_one({"member_id": member_id, "date_ist": date_ist_str})
+    attendance_map = {member_id: att_doc} if att_doc else None
+    
+    return _doc_to_member_response(doc, attendance_map=attendance_map)
 
 
 @app.get("/members/{member_id}/attendance-stats")
@@ -376,7 +389,13 @@ async def get_member_by_phone(phone: str):
         doc = await members_collection.find_one({"phone": phone})
     if not doc:
         raise HTTPException(status_code=404, detail="Member not found")
-    return _doc_to_member_response(doc)
+        
+    mid = str(doc["_id"])
+    date_ist_str = today_ist().strftime("%Y-%m-%d")
+    att_doc = await attendance_collection.find_one({"member_id": mid, "date_ist": date_ist_str})
+    attendance_map = {mid: att_doc} if att_doc else None
+    
+    return _doc_to_member_response(doc, attendance_map=attendance_map)
 
 
 @app.get("/members", response_model=list[MemberResponse])
@@ -385,10 +404,18 @@ async def list_members(skip: int = 0, limit: int = 100, brief: bool = False):
     skip = max(0, skip)
     limit = min(max(1, limit), 500)  # Cap at 500 for performance/security
     cursor = members_collection.find().sort("created_at", -1).skip(skip).limit(limit)
+    
+    # Fetch today's attendance for these members
+    date_ist_str = today_ist().strftime("%Y-%m-%d")
+    att_cursor = attendance_collection.find({"date_ist": date_ist_str})
+    attendance_map = {}
+    async for doc in att_cursor:
+        attendance_map[doc["member_id"]] = doc
+
     members = []
     async for doc in cursor:
         members.append(
-            _doc_to_member_response(doc, include_photos=not brief)
+            _doc_to_member_response(doc, include_photos=not brief, attendance_map=attendance_map)
         )
     return members
 
@@ -430,7 +457,12 @@ async def update_member(member_id: str, body: MemberUpdate):
     )
     if not result:
         raise HTTPException(status_code=404, detail="Member not found")
-    return _doc_to_member_response(result)
+        
+    date_ist_str = today_ist().strftime("%Y-%m-%d")
+    att_doc = await attendance_collection.find_one({"member_id": member_id, "date_ist": date_ist_str})
+    attendance_map = {member_id: att_doc} if att_doc else None
+    
+    return _doc_to_member_response(result, attendance_map=attendance_map)
 
 
 @app.patch("/members/{member_id}/photo", response_model=MemberResponse)
@@ -448,7 +480,12 @@ async def update_member_photo(member_id: str, body: PhotoUpdate):
     doc = await members_collection.find_one({"_id": oid})
     if not doc:
         raise HTTPException(status_code=404, detail="Member not found")
-    return _doc_to_member_response(doc)
+        
+    date_ist_str = today_ist().strftime("%Y-%m-%d")
+    att_doc = await attendance_collection.find_one({"member_id": member_id, "date_ist": date_ist_str})
+    attendance_map = {member_id: att_doc} if att_doc else None
+    
+    return _doc_to_member_response(doc, attendance_map=attendance_map)
 
 
 @app.patch("/members/{member_id}/id-document", response_model=MemberResponse)
@@ -469,10 +506,27 @@ async def update_member_id_document(member_id: str, body: IdDocumentUpdate):
     doc = await members_collection.find_one({"_id": oid})
     if not doc:
         raise HTTPException(status_code=404, detail="Member not found")
-    return _doc_to_member_response(doc)
+        
+    date_ist_str = today_ist().strftime("%Y-%m-%d")
+    att_doc = await attendance_collection.find_one({"member_id": member_id, "date_ist": date_ist_str})
+    attendance_map = {member_id: att_doc} if att_doc else None
+    
+    return _doc_to_member_response(doc, attendance_map=attendance_map)
 
 
-def _doc_to_member_response(doc, include_photos: bool = True) -> MemberResponse:
+def _doc_to_member_response(doc, include_photos: bool = True, attendance_map: dict | None = None) -> MemberResponse:
+    today_status = None
+    if attendance_map:
+        mid = str(doc["_id"])
+        if mid in attendance_map:
+            rec = attendance_map[mid]
+            today_status = TodayAttendance(
+                checked_in=True,
+                checked_out=bool(rec.get("check_out_at_ist")),
+                check_in_time=rec.get("check_in_at_ist"),
+                check_out_time=rec.get("check_out_at_ist"),
+            )
+    
     return MemberResponse(
                 id=str(doc["_id"]),
                 name=doc["name"],
@@ -488,6 +542,7 @@ def _doc_to_member_response(doc, include_photos: bool = True) -> MemberResponse:
         photo_base64=doc.get("photo_base64") if include_photos else None,
         id_document_base64=doc.get("id_document_base64") if include_photos else None,
         id_document_type=doc.get("id_document_type") if include_photos else None,
+        today_status=today_status,
     )
 
 
@@ -581,23 +636,40 @@ async def check_in(member_id: str):
 async def _attendance_docs_to_records(cursor) -> list:
     out = []
     async for doc in cursor:
-        check_in_at_ist = (
-            datetime.fromisoformat(doc["check_in_at_ist"]) if doc.get("check_in_at_ist") else doc["check_in_at_utc"]
-        )
-        if hasattr(check_in_at_ist, "tzinfo") and check_in_at_ist.tzinfo is None:
-            check_in_at_ist = check_in_at_ist.replace(tzinfo=IST)
-        elif hasattr(check_in_at_ist, "astimezone"):
-            check_in_at_ist = check_in_at_ist.astimezone(IST)
+        # Prefer the IST string if available (it was stored as now_ist().isoformat())
+        # Otherwise fallback to utc field.
+        check_in_at_ist = None
+        if doc.get("check_in_at_ist"):
+            try:
+                check_in_at_ist = datetime.fromisoformat(doc["check_in_at_ist"])
+            except ValueError:
+                pass
+        
+        if not check_in_at_ist:
+            check_in_at_ist = doc["check_in_at_utc"]
+            # If naive, it's UTC from Mongo. Convert to IST.
+            if hasattr(check_in_at_ist, "tzinfo") and check_in_at_ist.tzinfo is None:
+                from datetime import timezone
+                check_in_at_ist = check_in_at_ist.replace(tzinfo=timezone.utc).astimezone(IST)
+            elif hasattr(check_in_at_ist, "astimezone"):
+                check_in_at_ist = check_in_at_ist.astimezone(IST)
+
         check_out_at = None
         if doc.get("check_out_at_ist"):
             try:
                 check_out_at = datetime.fromisoformat(doc["check_out_at_ist"])
-                if check_out_at.tzinfo is None:
-                    check_out_at = check_out_at.replace(tzinfo=IST)
-                else:
-                    check_out_at = check_out_at.astimezone(IST)
-            except Exception:
+            except ValueError:
                 pass
+        
+        if not check_out_at and doc.get("check_out_at_utc"):
+            check_out_at = doc["check_out_at_utc"]
+            # If naive, it's UTC. Convert to IST.
+            if hasattr(check_out_at, "tzinfo") and check_out_at.tzinfo is None:
+                from datetime import timezone
+                check_out_at = check_out_at.replace(tzinfo=timezone.utc).astimezone(IST)
+            elif hasattr(check_out_at, "astimezone"):
+                check_out_at = check_out_at.astimezone(IST)
+
         out.append(
             AttendanceRecord(
                 id=str(doc["_id"]),
@@ -865,6 +937,20 @@ async def log_monthly_payment(body: LogMonthlyPaymentBody):
     }
     result = await payments_collection.insert_one(doc)
     doc["_id"] = result.inserted_id
+
+    # Create Invoice for this payment
+    inv_items = [{"description": f"Monthly Fee ({body.period})", "amount": body.amount}]
+    inv_doc = {
+        "member_id": body.member_id,
+        "member_name": member.get("name", ""),
+        "items": inv_items,
+        "total": body.amount,
+        "status": "Paid",
+        "issued_at": datetime.now(timezone.utc),
+        "paid_at": pay_date,
+    }
+    await invoices_collection.insert_one(inv_doc)
+
     return PaymentResponse(
         id=str(doc["_id"]),
         member_id=doc["member_id"],

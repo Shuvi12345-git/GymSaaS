@@ -312,12 +312,16 @@ class _LoginScreenState extends State<LoginScreen> {
                   ),
                   const SizedBox(width: 16),
                   Expanded(
-                    child: Text(
-                      'Jupiter Arena',
-                      style: GoogleFonts.poppins(
-                        fontSize: 24,
-                        fontWeight: FontWeight.bold,
-                        color: onSurface,
+                    child: FittedBox(
+                      fit: BoxFit.scaleDown,
+                      alignment: Alignment.centerLeft,
+                      child: Text(
+                        'Jupiter Arena',
+                        style: GoogleFonts.poppins(
+                          fontSize: 24,
+                          fontWeight: FontWeight.bold,
+                          color: onSurface,
+                        ),
                       ),
                     ),
                   ),

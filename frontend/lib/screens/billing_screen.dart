@@ -158,6 +158,7 @@ class _WalkInTabState extends State<_WalkInTab> {
       );
       if (!mounted) return;
       if (r.statusCode >= 200 && r.statusCode < 300) {
+        ApiClient.instance.invalidateCache();
         final inv = jsonDecode(r.body) as Map<String, dynamic>;
         widget.onSuccess();
         _name.clear();
@@ -401,6 +402,7 @@ class _ExistingMemberTabState extends State<_ExistingMemberTab> {
                       final pid = p['id'];
                       final pay = await ApiClient.instance.post('/payments/pay?member_id=$memberId&payment_id=$pid');
                       if (pay.statusCode >= 200 && pay.statusCode < 300) {
+                        ApiClient.instance.invalidateCache();
                         final idx = payments.indexWhere((x) => x['id'] == pid);
                         if (idx >= 0) payments[idx]['status'] = 'Paid';
                         setModalState(() {});
@@ -415,7 +417,7 @@ class _ExistingMemberTabState extends State<_ExistingMemberTab> {
                   const Padding(padding: EdgeInsets.all(16), child: Text('No pending dues')),
                 const SizedBox(height: 16),
                 const Divider(),
-                Text('Log monthly payment with date', style: GoogleFonts.poppins(fontWeight: FontWeight.w600)),
+                Text('Log Payment and issue invoice', style: GoogleFonts.poppins(fontWeight: FontWeight.w600)),
                 const SizedBox(height: 4),
                 Text(
                   '₹$monthlyAmount for ${membershipType == 'pt' ? 'Personal Training' : 'Regular'}. Payment date will be recorded.',
@@ -424,7 +426,7 @@ class _ExistingMemberTabState extends State<_ExistingMemberTab> {
                 const SizedBox(height: 12),
                 FilledButton.icon(
                   icon: const Icon(Icons.calendar_today, size: 20),
-                  label: const Text('Log monthly payment with date'),
+                  label: const Text('Log Payment and issue invoice'),
                   onPressed: () {
                     Navigator.pop(ctx);
                     _showLogMonthlyDialog(context, memberId, name, monthlyAmount, onSuccess);
@@ -494,6 +496,7 @@ class _ExistingMemberTabState extends State<_ExistingMemberTab> {
                     body: jsonEncode({'member_id': memberId, 'period': period, 'amount': amount, 'payment_date': paymentDate}),
                   );
                   if (r.statusCode >= 200 && r.statusCode < 300) {
+                    ApiClient.instance.invalidateCache();
                     onSuccess();
                     if (context.mounted) ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text('Monthly payment logged')));
                   }
@@ -695,6 +698,11 @@ class _InvoiceHistoryTabState extends State<_InvoiceHistoryTab> {
           ),
         ),
         actions: [
+          OutlinedButton.icon(
+            onPressed: () => PdfInvoiceHelper.generateAndPrint(inv),
+            icon: const Icon(Icons.print, size: 18),
+            label: const Text('Print / PDF'),
+          ),
           TextButton(onPressed: () => Navigator.pop(ctx), child: const Text('Close')),
           if (inv['status'] == 'Unpaid')
             FilledButton(
@@ -702,6 +710,7 @@ class _InvoiceHistoryTabState extends State<_InvoiceHistoryTab> {
                 Navigator.pop(ctx);
                 final r = await ApiClient.instance.post('/billing/pay?invoice_id=${inv['id']}');
                 if (r.statusCode >= 200 && r.statusCode < 300) {
+                  ApiClient.instance.invalidateCache();
                   onRefresh();
                   if (context.mounted) ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text('Payment recorded')));
                 }

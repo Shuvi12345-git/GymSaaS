@@ -42,7 +42,7 @@ class AdminDashboardScreen extends StatefulWidget {
 class _AdminDashboardScreenState extends State<AdminDashboardScreen> {
   int _selectedIndex = 0;
   int _membersRefreshKey = 0;
-  final List<Widget?> _tabBodies = [null, null, null, null];
+  final Set<int> _visitedTabs = {0};
   DateTime _lastActivityAt = DateTime.now();
   Timer? _sessionTimer;
   static const Duration _sessionTimeout = Duration(minutes: 15);
@@ -76,33 +76,8 @@ class _AdminDashboardScreenState extends State<AdminDashboardScreen> {
     _lastActivityAt = DateTime.now();
   }
 
-  Widget _buildTabAt(int index) {
-    switch (index) {
-      case 0:
-        return _OverviewTab();
-      case 1:
-        return _MembersTab(
-          refreshKey: _membersRefreshKey,
-          onRegisterPressed: () async {
-            await Navigator.push(context, MaterialPageRoute(builder: (_) => const RegistrationScreen()));
-            setState(() => _membersRefreshKey++);
-          },
-          onMemberTap: (m) => Navigator.push(context, MaterialPageRoute(builder: (_) => MemberDetailScreen(member: m))).then((_) => setState(() => _membersRefreshKey++)),
-        );
-      case 2:
-        return _FeesTab();
-      case 3:
-        return const _BillingTab();
-      default:
-        return const SizedBox.shrink();
-    }
-  }
-
   @override
   Widget build(BuildContext context) {
-    if (_tabBodies[_selectedIndex] == null) {
-      _tabBodies[_selectedIndex] = _buildTabAt(_selectedIndex);
-    }
     return Scaffold(
       appBar: AppBar(
         title: Row(
@@ -114,11 +89,13 @@ class _AdminDashboardScreenState extends State<AdminDashboardScreen> {
             )),
             const SizedBox(width: 8),
             Flexible(
-              child: Text(
-                'Jupiter Arena Admin',
-                style: GoogleFonts.poppins(fontWeight: FontWeight.w600, fontSize: 18),
-                overflow: TextOverflow.ellipsis,
-                maxLines: 1,
+              child: FittedBox(
+                fit: BoxFit.scaleDown,
+                alignment: Alignment.centerLeft,
+                child: Text(
+                  'Jupiter Arena Admin',
+                  style: GoogleFonts.poppins(fontWeight: FontWeight.w600, fontSize: 18),
+                ),
               ),
             ),
           ],
@@ -142,10 +119,19 @@ class _AdminDashboardScreenState extends State<AdminDashboardScreen> {
           child: IndexedStack(
             index: _selectedIndex,
             children: [
-              _tabBodies[0] ?? const SizedBox.shrink(),
-              _tabBodies[1] ?? const SizedBox.shrink(),
-              _tabBodies[2] ?? const SizedBox.shrink(),
-              _tabBodies[3] ?? const SizedBox.shrink(),
+              _visitedTabs.contains(0) ? _OverviewTab(isActive: _selectedIndex == 0) : const SizedBox.shrink(),
+              _visitedTabs.contains(1)
+                  ? _MembersTab(
+                      refreshKey: _membersRefreshKey,
+                      onRegisterPressed: () async {
+                        await Navigator.push(context, MaterialPageRoute(builder: (_) => const RegistrationScreen()));
+                        setState(() => _membersRefreshKey++);
+                      },
+                      onMemberTap: (m) => Navigator.push(context, MaterialPageRoute(builder: (_) => MemberDetailScreen(member: m))).then((_) => setState(() => _membersRefreshKey++)),
+                    )
+                  : const SizedBox.shrink(),
+              _visitedTabs.contains(2) ? _FeesTab(isActive: _selectedIndex == 2) : const SizedBox.shrink(),
+              _visitedTabs.contains(3) ? const _BillingTab() : const SizedBox.shrink(),
             ],
           ),
         ),
@@ -153,8 +139,11 @@ class _AdminDashboardScreenState extends State<AdminDashboardScreen> {
       bottomNavigationBar: NavigationBar(
         selectedIndex: _selectedIndex,
         onDestinationSelected: (i) {
-          if (_tabBodies[i] == null) _tabBodies[i] = _buildTabAt(i);
-          setState(() => _selectedIndex = i);
+          setState(() {
+            _selectedIndex = i;
+            _visitedTabs.add(i);
+            if (i == 1) _membersRefreshKey++;
+          });
           _onActivity();
         },
         backgroundColor: AppTheme.surfaceVariant,
@@ -244,6 +233,9 @@ class _BillingTab extends StatelessWidget {
 }
 
 class _OverviewTab extends StatefulWidget {
+  final bool isActive;
+  const _OverviewTab({this.isActive = false});
+
   @override
   State<_OverviewTab> createState() => _OverviewTabState();
 }
@@ -260,6 +252,14 @@ class _OverviewTabState extends State<_OverviewTab> {
   void initState() {
     super.initState();
     _load();
+  }
+
+  @override
+  void didUpdateWidget(_OverviewTab oldWidget) {
+    super.didUpdateWidget(oldWidget);
+    if (widget.isActive && !oldWidget.isActive) {
+      _load();
+    }
   }
 
   Future<void> _load() async {
@@ -638,6 +638,9 @@ class _MembersTabState extends State<_MembersTab> {
 }
 
 class _FeesTab extends StatefulWidget {
+  final bool isActive;
+  const _FeesTab({this.isActive = false});
+
   @override
   State<_FeesTab> createState() => _FeesTabState();
 }
@@ -648,6 +651,13 @@ class _FeesTabState extends State<_FeesTab> {
   bool _loading = true;
   /// null = show all; 'Paid' | 'Due' | 'Overdue' = filter by status
   String? _statusFilter;
+  final _searchController = TextEditingController();
+
+  @override
+  void dispose() {
+    _searchController.dispose();
+    super.dispose();
+  }
 
   @override
   void initState() {
@@ -655,11 +665,19 @@ class _FeesTabState extends State<_FeesTab> {
     _load();
   }
 
+  @override
+  void didUpdateWidget(_FeesTab oldWidget) {
+    super.didUpdateWidget(oldWidget);
+    if (widget.isActive && !oldWidget.isActive) {
+      _load();
+    }
+  }
+
   Future<void> _load() async {
     setState(() => _loading = true);
     try {
-      final r1 = await ApiClient.instance.get('/payments/fees-summary', useCache: true);
-      final r2 = await ApiClient.instance.get('/payments', useCache: true);
+      final r1 = await ApiClient.instance.get('/payments/fees-summary', useCache: false);
+      final r2 = await ApiClient.instance.get('/payments', useCache: false);
       if (!mounted) return;
       if (r1.statusCode >= 200 && r1.statusCode < 300)
         _summary = jsonDecode(r1.body) as Map<String, dynamic>;
@@ -745,10 +763,27 @@ class _FeesTabState extends State<_FeesTab> {
                 ),
               ),
             const SizedBox(height: 12),
-            ...((_statusFilter == null
-                    ? _payments
-                    : _payments.where((p) => (p as Map<String, dynamic>)['status'] == _statusFilter).toList())
-                .map((p) {
+            TextField(
+              controller: _searchController,
+              decoration: InputDecoration(
+                hintText: 'Search by name...',
+                prefixIcon: const Icon(Icons.search, size: 20),
+                border: OutlineInputBorder(borderRadius: BorderRadius.circular(12)),
+                isDense: true,
+                filled: true,
+                fillColor: AppTheme.surfaceVariant,
+                contentPadding: const EdgeInsets.symmetric(horizontal: 12, vertical: 10),
+              ),
+              onChanged: (_) => setState(() {}),
+            ),
+            const SizedBox(height: 12),
+            ...(_payments.where((p) {
+              final map = p as Map<String, dynamic>;
+              if (_statusFilter != null && map['status'] != _statusFilter) return false;
+              final q = _searchController.text.trim().toLowerCase();
+              if (q.isNotEmpty && !(map['member_name'] as String? ?? '').toLowerCase().contains(q)) return false;
+              return true;
+            }).map((p) {
               final map = p as Map<String, dynamic>;
               return Card(
                 color: AppTheme.surfaceVariant,
@@ -831,6 +866,7 @@ class _FeesTabState extends State<_FeesTab> {
                   );
                   if (ctx.mounted) {
                     if (r.statusCode >= 200 && r.statusCode < 300) {
+                      ApiClient.instance.invalidateCache();
                       ScaffoldMessenger.of(ctx).showSnackBar(const SnackBar(content: Text('Payment status updated')));
                       onSuccess();
                     } else {

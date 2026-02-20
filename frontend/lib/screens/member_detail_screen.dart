@@ -19,6 +19,7 @@ import 'package:intl/intl.dart';
 import '../core/api_client.dart';
 import '../core/date_utils.dart';
 import '../theme/app_theme.dart';
+import '../widgets/attendance_stats_card.dart';
 import 'dashboard_screen.dart';
 
 /// Shows edit member dialog; returns updated [Member] on save, null on cancel.
@@ -323,7 +324,14 @@ class _MemberDetailScreenState extends State<MemberDetailScreen> with SingleTick
         headers: {'Content-Type': 'application/json'},
         body: jsonEncode(body),
       );
-      if (mounted && r.statusCode >= 200 && r.statusCode < 300) await _loadFullMember();
+      if (mounted && r.statusCode >= 200 && r.statusCode < 300) {
+        await _loadFullMember();
+        if (mounted) {
+          ScaffoldMessenger.of(context).showSnackBar(
+            SnackBar(content: Text(base64 != null ? 'ID document uploaded successfully' : 'ID document removed')),
+          );
+        }
+      }
     } catch (e) {
       if (mounted) ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text('Error: ${e.toString().split('\n').first}')));
     }
@@ -512,6 +520,7 @@ class _MemberDetailScreenState extends State<MemberDetailScreen> with SingleTick
                   stats: _attendanceStats,
                   attendanceList: _attendanceList,
                   loading: _loadingAttendance,
+                  lastVisit: m.lastAttendanceDate != null ? formatDisplayDate(m.lastAttendanceDate!) : '',
                   onRefresh: () async {
                     await _loadStats();
                     await _loadAttendance();
@@ -698,8 +707,39 @@ class _OverviewTab extends StatelessWidget {
                   const SizedBox(height: 16),
                   Row(
                     children: [
-                      Icon(member.idDocumentBase64 != null ? Icons.badge_rounded : Icons.badge_outlined, size: 20, color: AppTheme.primary),
-                      const SizedBox(width: 8),
+                      if (member.idDocumentBase64 != null)
+                        GestureDetector(
+                          onTap: () => showDialog(
+                            context: context,
+                            builder: (_) => Dialog(
+                              backgroundColor: Colors.transparent,
+                              insetPadding: const EdgeInsets.all(16),
+                              child: InteractiveViewer(
+                                clipBehavior: Clip.none,
+                                maxScale: 5.0,
+                                child: Image.memory(
+                                  base64Decode(member.idDocumentBase64!),
+                                  fit: BoxFit.contain,
+                                ),
+                              ),
+                            ),
+                          ),
+                          child: Container(
+                            width: 50,
+                            height: 50,
+                            decoration: BoxDecoration(
+                              borderRadius: BorderRadius.circular(8),
+                              border: Border.all(color: Colors.grey.shade300),
+                              image: DecorationImage(
+                                image: MemoryImage(base64Decode(member.idDocumentBase64!)),
+                                fit: BoxFit.cover,
+                              ),
+                            ),
+                          ),
+                        )
+                      else
+                        Icon(Icons.badge_outlined, size: 24, color: AppTheme.primary),
+                      const SizedBox(width: 12),
                       Expanded(
                         child: Column(
                           crossAxisAlignment: CrossAxisAlignment.start,
@@ -866,12 +906,14 @@ class _AttendanceTab extends StatelessWidget {
   final Map<String, dynamic>? stats;
   final List<dynamic> attendanceList;
   final bool loading;
+  final String lastVisit;
   final Future<void> Function() onRefresh;
 
   const _AttendanceTab({
     required this.stats,
     required this.attendanceList,
     required this.loading,
+    required this.lastVisit,
     required this.onRefresh,
   });
 
@@ -887,24 +929,11 @@ class _AttendanceTab extends StatelessWidget {
       child: ListView(
         padding: EdgeInsets.all(padding),
         children: [
-          Text(
-            'Total visits till date, visits this month, avg duration of workout',
-            style: GoogleFonts.poppins(fontSize: 14, fontWeight: FontWeight.w600, color: AppTheme.onSurface),
-          ),
-          const SizedBox(height: 12),
-          Card(
-            color: AppTheme.surfaceVariant,
-            shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
-            child: Padding(
-              padding: EdgeInsets.all(padding),
-              child: Column(
-                children: [
-                  _statRow('Total visits till date', '${stats?['total_visits'] ?? 0}'),
-                  _statRow('Visits this month', '${stats?['visits_this_month'] ?? 0}'),
-                  _statRow('Avg duration of workout', stats?['avg_duration_minutes'] != null ? '${stats!['avg_duration_minutes']} min' : '—'),
-                ],
-              ),
-            ),
+          AttendanceStatsWidget(
+            totalVisits: stats?['total_visits'] ?? 0,
+            visitsThisMonth: stats?['visits_this_month'] ?? 0,
+            avgDurationMinutes: stats?['avg_duration_minutes'],
+            lastVisit: lastVisit,
           ),
           const SizedBox(height: 20),
           Text(
@@ -932,19 +961,6 @@ class _AttendanceTab extends StatelessWidget {
                 ),
               );
             }),
-        ],
-      ),
-    );
-  }
-
-  Widget _statRow(String label, String value) {
-    return Padding(
-      padding: const EdgeInsets.symmetric(vertical: 8),
-      child: Row(
-        mainAxisAlignment: MainAxisAlignment.spaceBetween,
-        children: [
-          Text(label, style: GoogleFonts.poppins(color: Colors.grey.shade700, fontSize: 14)),
-          Text(value, style: GoogleFonts.poppins(fontWeight: FontWeight.w600, color: AppTheme.onSurface)),
         ],
       ),
     );
