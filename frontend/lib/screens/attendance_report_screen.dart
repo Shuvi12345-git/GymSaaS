@@ -8,9 +8,7 @@
 import 'dart:convert';
 
 import 'package:flutter/material.dart';
-import 'package:font_awesome_flutter/font_awesome_flutter.dart';
 import 'package:google_fonts/google_fonts.dart';
-import 'package:http/http.dart' as http;
 
 import '../core/api_client.dart';
 import '../core/date_utils.dart';
@@ -18,8 +16,6 @@ import '../theme/app_theme.dart';
 
 /// Breakpoint below which layout stacks vertically (e.g. title + button).
 const double _attendanceNarrowBreakpoint = 480;
-
-final _apiBase = ApiClient.baseUrl;
 
 class AttendanceEntry {
   final String id;

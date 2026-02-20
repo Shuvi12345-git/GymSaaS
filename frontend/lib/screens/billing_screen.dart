@@ -10,14 +10,11 @@ import 'dart:convert';
 import 'package:flutter/material.dart';
 import 'package:font_awesome_flutter/font_awesome_flutter.dart';
 import 'package:google_fonts/google_fonts.dart';
-import 'package:url_launcher/url_launcher.dart';
-
 import '../core/api_client.dart';
 import '../core/date_utils.dart';
 import '../core/export_helper.dart';
+import '../core/pdf_invoice_helper.dart';
 import '../theme/app_theme.dart';
-
-final _apiBase = ApiClient.baseUrl;
 
 class BillingScreen extends StatefulWidget {
   const BillingScreen({super.key});

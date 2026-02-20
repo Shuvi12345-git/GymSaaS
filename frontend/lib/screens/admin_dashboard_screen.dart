@@ -12,9 +12,6 @@ import 'dart:convert';
 import 'package:flutter/material.dart';
 import 'package:font_awesome_flutter/font_awesome_flutter.dart';
 import 'package:google_fonts/google_fonts.dart';
-import 'package:http/http.dart' as http;
-import 'package:url_launcher/url_launcher.dart';
-
 import '../core/api_client.dart';
 import '../core/date_utils.dart';
 import '../core/export_helper.dart';
@@ -29,7 +26,6 @@ import 'registration_screen.dart';
 /// Breakpoint below which overview cards stack vertically (avoid overflow on phones).
 const double _overviewNarrowBreakpoint = 420;
 
-final _apiBase = ApiClient.baseUrl;
 const _padding = 20.0;
 
 class AdminDashboardScreen extends StatefulWidget {

@@ -10,19 +10,14 @@ import 'dart:convert';
 import 'dart:io';
 
 import 'package:flutter/material.dart';
-import 'package:font_awesome_flutter/font_awesome_flutter.dart';
 import 'package:google_fonts/google_fonts.dart';
-import 'package:http/http.dart' as http;
 import 'package:image_picker/image_picker.dart';
 import 'package:file_picker/file_picker.dart';
 
 import '../core/api_client.dart';
-import '../core/date_utils.dart';
 import '../widgets/skeleton_loading.dart';
 import '../widgets/attendance_stats_card.dart';
 import '../theme/app_theme.dart';
-
-final _apiBase = ApiClient.baseUrl;
 
 class MemberHomeScreen extends StatefulWidget {
   final Map<String, dynamic> member;
@@ -113,7 +108,7 @@ class _MemberHomeScreenState extends State<MemberHomeScreen> {
       ),
     );
     if (type == null) return null;
-    return (base64Encode(bytes!), type);
+    return (base64Encode(bytes), type);
   }
 
   Future<void> _updatePhoto(String? base64) async {

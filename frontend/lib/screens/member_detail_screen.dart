@@ -242,7 +242,6 @@ class _MemberDetailScreenState extends State<MemberDetailScreen> with SingleTick
   Map<String, dynamic>? _attendanceStats;
   List<dynamic> _payments = [];
   List<dynamic> _attendanceList = [];
-  bool _loadingStats = true;
   bool _loadingPayments = true;
   bool _loadingAttendance = true;
 
@@ -299,7 +298,7 @@ class _MemberDetailScreenState extends State<MemberDetailScreen> with SingleTick
       ),
     );
     if (type == null) return null;
-    return (base64Encode(bytes!), type);
+    return (base64Encode(bytes), type);
   }
 
   Future<void> _updateMemberPhoto(String? base64) async {
@@ -344,18 +343,12 @@ class _MemberDetailScreenState extends State<MemberDetailScreen> with SingleTick
   }
 
   Future<void> _loadStats() async {
-    setState(() => _loadingStats = true);
     try {
       final r = await ApiClient.instance.get('/members/${_member.id}/attendance-stats', useCache: false);
       if (mounted && r.statusCode == 200) {
-        setState(() {
-          _attendanceStats = jsonDecode(r.body) as Map<String, dynamic>;
-          _loadingStats = false;
-        });
-      } else if (mounted) setState(() => _loadingStats = false);
-    } catch (_) {
-      if (mounted) setState(() => _loadingStats = false);
-    }
+        setState(() => _attendanceStats = jsonDecode(r.body) as Map<String, dynamic>);
+      }
+    } catch (_) {}
   }
 
   Future<void> _loadPayments() async {

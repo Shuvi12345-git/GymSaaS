@@ -51,7 +51,7 @@ class _AdminLoginScreenState extends State<AdminLoginScreen> {
 
   Future<void> _login() async {
     final phone = _phoneController.text.trim();
-    final otp = _otpController.text.trim();
+    final _ = _otpController.text.trim(); // OTP validated by backend when implemented
     if (phone.isEmpty) {
       setState(() => _error = 'Enter phone number');
       return;

@@ -9,13 +9,11 @@ import 'dart:convert';
 
 import 'package:flutter/material.dart';
 import 'package:google_fonts/google_fonts.dart';
-import 'package:http/http.dart' as http;
 
 import '../core/api_client.dart';
 import '../theme/app_theme.dart';
 import 'member_home_screen.dart';
 
-final _apiBase = ApiClient.baseUrl;
 const _padding = 20.0;
 
 class MemberLoginScreen extends StatefulWidget {
@@ -56,7 +54,7 @@ class _MemberLoginScreenState extends State<MemberLoginScreen> {
 
   Future<void> _login() async {
     final phone = _phoneController.text.trim();
-    final otp = _otpController.text.trim();
+    final _ = _otpController.text.trim(); // OTP validated by backend when implemented
     if (phone.isEmpty) {
       setState(() => _error = 'Enter phone number');
       return;

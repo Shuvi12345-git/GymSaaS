@@ -9,15 +9,12 @@
 import 'dart:convert';
 
 import 'package:flutter/material.dart';
-import 'package:http/http.dart' as http;
 
 import '../core/api_client.dart';
 import '../theme/app_theme.dart';
 import '../widgets/animated_fade.dart';
 import '../widgets/skeleton_loading.dart';
 import 'attendance_report_screen.dart';
-
-final _apiBase = ApiClient.baseUrl;
 
 class Member {
   final String id;

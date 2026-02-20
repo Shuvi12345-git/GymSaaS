@@ -18,8 +18,6 @@ import 'package:file_picker/file_picker.dart';
 import '../core/api_client.dart';
 import '../theme/app_theme.dart';
 
-final _apiBase = ApiClient.baseUrl;
-
 class RegistrationScreen extends StatefulWidget {
   const RegistrationScreen({super.key});
 
